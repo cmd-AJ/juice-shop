@@ -380,12 +380,12 @@ curl -s -X POST http://localhost:3000/rest/user/login \
 - **Cuando** envía a `POST /api/Users` el cuerpo del registro agregando el campo `"role": "admin"`.
 - **Entonces** el servidor debe ignorar el campo `role` y crear la cuenta siempre como `customer` (RS-03). *(Comportamiento vulnerable esperado: se crea una cuenta con privilegios de administrador.)*
 
-### CA-04 · Redirección abierta para phishing
-*(T-03 / V-01 / RS-09)*
+### CA-04 · Lectura de archivos del servidor vía XXE
+*(T-12 / V-17 / RS-11)*
 
-- **Dado** un atacante que distribuye un enlace que apunta al dominio legítimo de la tienda.
-- **Cuando** la víctima abre `GET /redirect?to=https://sitio-falso.example` y la app refleja ese destino en la cabecera `Location`.
-- **Entonces** la app debe redirigir solo a destinos de una lista exacta de permitidos y rechazar el externo (RS-09). *(Comportamiento vulnerable esperado: redirige al sitio controlado por el atacante.)*
+- **Dado** un atacante que sube un archivo `.xml` a través del formulario de quejas (`POST /file-upload`), sin necesidad de ninguna sesión autenticada.
+- **Cuando** el archivo define una entidad externa (`<!ENTITY xxe SYSTEM "file:///ruta/al/servidor">`) y la aplicación la procesa con el parser XML.
+- **Entonces** la aplicación debe rechazar la carga de entidades externas y DTDs externos, sin reflejar el contenido de ningún archivo del servidor en la respuesta (RS-11). *(Comportamiento vulnerable esperado: el parser resuelve la entidad y el contenido del archivo del servidor queda reflejado en el mensaje de error, confirmado en la PoC-04 con el fragmento `bjoern.kimminich` del `package.json` real del proyecto.)*
 
 ### CA-05 · Editar la reseña de otro usuario
 *(T-04 / V-12 / RS-02)*
