@@ -430,40 +430,387 @@ Las recomendaciones de actualización no deben aplicarse automáticamente sin ve
 
 ## 6. SBOM · Inventario de componentes
 
-**Estado:** pendiente de implementación.
+6.1. Objetivo
 
-**Herramientas previstas:** Syft y CycloneDX.
+Generar un Software Bill of Materials (SBOM) que permita identificar los componentes y paquetes presentes en el proyecto OWASP Juice Shop, utilizando el estándar CycloneDX.
 
-El objetivo es generar el inventario de componentes y dependencias de la aplicación, publicando `sbom.cdx.json` como artefacto del pipeline.
+6.2. Herramienta utilizada
+
+Herramienta: Syft.
+
+Versión: 1.55.0.
+
+Formato: CycloneDX JSON.
+
+Ejecución: entorno local Windows PowerShell.
+
+Archivo generado: sbom.cdx.json.
+
+6.3. Implementación
+
+Se utilizó Syft para analizar el directorio raíz del proyecto y generar un inventario de componentes.
+
+Para reducir el tiempo de procesamiento se excluyeron los siguientes directorios:
+
+node_modules
+
+.git
+
+dist
+
+coverage
+
+Comando utilizado:
+
+syft scan dir:. `
+  --exclude='**/node_modules/**' `
+  --exclude='**/.git/**' `
+  --exclude='**/dist/**' `
+  --exclude='**/coverage/**' `
+  -o cyclonedx-json=sbom.cdx.json
+
+El análisis finalizó correctamente y generó el archivo sbom.cdx.json en la raíz del repositorio.
+
+6.4. Resultados
+
+Métrica
+
+Resultado
+
+Herramienta
+
+Syft 1.55.0
+
+Formato
+
+CycloneDX
+
+Versión del estándar
+
+1.7
+
+Paquetes catalogados por Syft
+
+54
+
+Componentes registrados en el JSON
+
+71
+
+Tamaño del archivo
+
+73 KB
+
+Resultado
+
+Generación exitosa
+
+La diferencia entre los paquetes catalogados durante el proceso y los componentes registrados en el JSON corresponde a métricas distintas del inventario generado.
+
+6.5. Validación
+
+Se verificó que el archivo fuera un JSON válido y que incluyera los metadatos esperados.
+
+Comando utilizado:
+
+$sbom = Get-Content .\sbom.cdx.json -Raw | ConvertFrom-Json
+
+"Formato: $($sbom.bomFormat)"
+"Versión: $($sbom.specVersion)"
+"Componentes: $($sbom.components.Count)"
+
+Resultado:
+
+Formato: CycloneDX.
+
+Versión: 1.7.
+
+Componentes: 71.
+
+6.6. Limitaciones
+
+El análisis excluyó node_modules y otros directorios, por lo que el inventario debe considerarse una primera versión del SBOM y no una representación exhaustiva de todas las dependencias instaladas.
+
+Además, no se encontraron archivos de bloqueo de dependencias fuera de los directorios excluidos durante la revisión realizada.
+
+Se requiere evaluar posteriormente la cobertura del inventario y su integración con el pipeline automatizado.
+
+Estado del control SBOM: generado y validado localmente. Integración en GitHub Actions pendiente.
+
+Evidencia: sbom.cdx.json.
 
 ## 7. DAST · Análisis dinámico
 
-**Estado:** pendiente de implementación.
+7.1. Objetivo
 
-**Herramienta prevista:** OWASP ZAP baseline.
+Realizar un análisis dinámico de seguridad sobre una instancia de OWASP Juice Shop en ejecución, identificando configuraciones inseguras y posibles problemas de seguridad observables mediante solicitudes HTTP.
 
-Este control permitirá analizar automáticamente una instancia de prueba de Juice Shop en ejecución y generar un reporte de seguridad.
+7.2. Herramienta utilizada
 
-Si no es posible ejecutar DAST dentro del pipeline, se documentará la justificación técnica y la ubicación del reporte manual correspondiente.
+Herramienta: OWASP ZAP.
 
-El análisis automático será independiente de las pruebas ofensivas que realice el Red Team.
+Tipo de análisis: DAST.
 
+Modo: Baseline Scan.
+
+Entorno: Docker Desktop en Windows.
+
+Objetivo: http://host.docker.internal:3000.
+
+Reportes: HTML y JSON.
+
+7.3. Preparación del entorno
+
+Se inició Docker Desktop y se verificó que el motor Docker estuviera operativo.
+
+También se comprobó que la aplicación Juice Shop estuviera ejecutándose localmente en el puerto 3000.
+
+Se utilizó host.docker.internal para permitir que el contenedor de ZAP accediera al servicio que se ejecutaba en Windows.
+
+7.4. Implementación
+
+Se ejecutó OWASP ZAP mediante Docker utilizando la imagen oficial:
+
+docker run --rm -t `
+  -v "${PWD}:/zap/wrk/:rw" `
+  ghcr.io/zaproxy/zaproxy:stable `
+  zap-baseline.py `
+  -t http://host.docker.internal:3000 `
+  -r zap-report.html `
+  -J zap-report.json
+
+El escaneo permitió recorrer la aplicación y generar reportes de los hallazgos identificados.
+
+7.5. Resultados
+
+Métrica
+
+Resultado
+
+URLs procesadas
+
+33
+
+PASS
+
+61
+
+FAIL
+
+0
+
+WARN-NEW mostrados en consola
+
+7
+
+Reporte HTML
+
+Generado
+
+Reporte JSON
+
+Generado
+
+Resultado de ejecución
+
+Completado
+
+El reporte JSON contiene 9 objetos de alerta agrupados. Esta cifra no debe confundirse con las 7 categorías WARN-NEW mostradas en el resumen de consola.
+
+Entre los hallazgos identificados se encuentran:
+
+Hallazgo
+
+ID ZAP
+
+Riesgo
+
+Content Security Policy Header Not Set
+
+10038
+
+Medium
+
+Storable and Cacheable Content
+
+10049
+
+Informational
+
+Deprecated Feature Policy Header Set
+
+10063
+
+Low
+
+Cross-Domain Misconfiguration
+
+10098
+
+Medium
+
+Modern Web Application
+
+10109
+
+Informational
+
+Dangerous JS Functions
+
+10110
+
+Low
+
+Cross-Origin-Embedder-Policy Header Missing or Invalid
+
+90004
+
+Low
+
+Cross-Origin-Opener-Policy Header Missing or Invalid
+
+—
+
+Low
+
+7.6. Interpretación
+
+El análisis identificó principalmente configuraciones de seguridad HTTP que requieren revisión, incluyendo la ausencia de determinados encabezados de seguridad y configuraciones relacionadas con políticas de origen cruzado.
+
+También se identificaron advertencias informativas y patrones de JavaScript que requieren evaluación adicional.
+
+La presencia de una alerta no demuestra por sí sola que exista una vulnerabilidad explotable. Los resultados deben validarse considerando el contexto de la aplicación y la evidencia técnica correspondiente.
+
+7.7. Limitaciones
+
+Se utilizó ZAP Baseline, que realiza principalmente análisis pasivo. No equivale a un escaneo activo ni demuestra la explotación de las vulnerabilidades identificadas.
+
+El análisis se ejecutó localmente y todavía no forma parte del workflow de GitHub Actions.
+
+Estado del control DAST: ejecutado localmente y reportes generados. Integración en CI/CD pendiente.
+
+Evidencias:
+
+zap-report.html
+
+zap-report.json
 ## 8. Security gate
 
-**Estado:** pendiente de configuración e integración final.
+8.1. Objetivo
 
-El pipeline inició en modo reporte para permitir el análisis de los hallazgos sin bloquear automáticamente las ejecuciones.
+Implementar una política de evaluación de seguridad que permita determinar si los resultados de los análisis deben bloquear, advertir o permitir la continuación del proceso.
 
-Los umbrales definitivos deberán ser acordados y justificados por los cuatro integrantes.
+8.2. Implementación
 
-| Control | Herramienta | Umbral o condición | Estado |
-|---|---|---|---|
-| SAST | Semgrep | Modo reporte; umbral definitivo pendiente | Implementado |
-| SCA | npm audit | Modo reporte; umbral definitivo pendiente | Implementado |
-| SBOM | Syft / CycloneDX | Publicar `sbom.cdx.json` | Pendiente |
-| DAST | OWASP ZAP baseline | Pendiente de definir | Pendiente |
+Se creó el script security-gate.ps1 en la raíz del proyecto.
 
-**Nota:** que el pipeline finalice correctamente en modo reporte no significa que el código se encuentre libre de vulnerabilidades.
+El script consume el reporte JSON generado por OWASP ZAP, clasifica las alertas según su código de riesgo y aplica una política de decisión.
+
+8.3. Política de seguridad
+
+Severidad
+
+RiskCode
+
+Decisión
+
+Código de salida
+
+High
+
+3
+
+FAIL
+
+1
+
+Medium
+
+2
+
+WARN
+
+0
+
+Low
+
+1
+
+PASS
+
+0
+
+Informational
+
+0
+
+PASS
+
+0
+
+La política establece que:
+
+Las alertas High bloquean el proceso.
+
+Las alertas Medium generan una advertencia y requieren revisión.
+
+Las alertas Low e Informational se registran, pero no bloquean la ejecución.
+
+8.4. Ejecución
+
+Comando utilizado:
+
+.\security-gate.ps1
+
+El script verifica que exista el reporte, comprueba que el JSON pueda interpretarse y clasifica las alertas antes de tomar una decisión.
+
+8.5. Resultados de la validación
+
+Severidad
+
+Tipos de alerta
+
+Instancias
+
+High
+
+0
+
+0
+
+Medium
+
+2
+
+10
+
+Low
+
+4
+
+17
+
+Informational
+
+3
+
+10
+
+Resultado obtenido: WARN.
+
+No se encontraron alertas High, pero sí dos tipos de alertas Medium que requieren revisión.
+
+El script finalizó con código de salida 0, permitiendo continuar el proceso con advertencias.
+
+8.6. Limitaciones e integración
+
+El Security Gate fue ejecutado y validado localmente utilizando el reporte real de ZAP.
+
+Sin embargo, todavía no se encuentra integrado en GitHub Actions. Por lo tanto, su resultado local no implica que el pipeline remoto esté bloqueando automáticamente cambios inseguros.
+
+La siguiente etapa consiste en incorporar el script al workflow devsecops.yml y comprobar su comportamiento dentro del entorno de CI/CD.
+
+Estado del Security Gate: implementado y validado localmente. Integración en GitHub Actions pendiente.
 
 ## 9. PoC del Red Team
 
@@ -682,24 +1029,18 @@ Este registro permitirá construir la línea de tiempo del informe final y relac
 
 ## 11. Estado general del Hito 2
 
-| Actividad | Estado |
-|---|---|
-| Preparación de la rama de trabajo | Completada |
-| Creación de carpeta de documentación | Completada |
-| Deshabilitación de workflows originales | Completada |
-| Configuración inicial de GitHub Actions | Completada |
-| Primera ejecución del pipeline | Exitosa |
-| Integración SAST con Semgrep | Completada |
-| Generación del reporte SAST | Completada |
-| Revisión inicial de hallazgos SAST | Completada |
-| Integración SCA con npm audit | Completada |
-| Generación de reportes SCA | Completada |
-| Análisis de hallazgos SCA | Completado |
-| Generación de SBOM | Pendiente |
-| Integración DAST | Pendiente |
-| Configuración del security gate | Pendiente |
-| Documentación de las PoC del Red Team | Pendiente de incorporar |
-| Validación integral del H2 | Pendiente |
+Actividad	Estado
+Generación de SBOM con Syft	Completada localmente
+Validación del SBOM CycloneDX	Completada
+Generación del reporte DAST con ZAP	Completada localmente
+Validación del reporte ZAP	Completada
+Implementación del Security Gate	Completada localmente
+Validación del Security Gate	Completada
+Integración de SBOM en GitHub Actions	Pendiente
+Integración de DAST en GitHub Actions	Pendiente
+Integración del Security Gate en GitHub Actions	Pendiente
+Documentación de las PoC del Red Team	Pendiente de incorporar
+Validación integral del H2	Pendiente
 
 ## 12. Conclusiones preliminares
 
@@ -714,6 +1055,14 @@ Los resultados también evidenciaron la necesidad de distinguir entre vulnerabil
 El pipeline se mantiene inicialmente en modo reporte, permitiendo registrar los hallazgos sin bloquear el desarrollo.
 
 Se integró adicionalmente el control SCA mediante npm audit, identificando 40 paquetes afectados en el backend y 22 en el frontend. Los resultados permiten priorizar vulnerabilidades conocidas en las dependencias de la aplicación. El siguiente paso consiste en incorporar SBOM y DAST, definir el security gate e integrar las evidencias del Red Team.
+
+Adicionalmente, se generó un SBOM en formato CycloneDX mediante Syft, obteniendo 71 componentes registrados en el archivo JSON. El inventario fue validado localmente, aunque su cobertura debe ampliarse debido a las exclusiones aplicadas durante el análisis.
+
+También se ejecutó OWASP ZAP Baseline contra la instancia local de Juice Shop, obteniendo reportes HTML y JSON. El análisis procesó 33 URLs y registró advertencias relacionadas principalmente con encabezados HTTP y configuraciones de seguridad.
+
+Finalmente, se implementó y validó un Security Gate en PowerShell que clasifica los hallazgos de ZAP y aplica una política de bloqueo para alertas High y advertencia para alertas Medium. La ejecución de prueba obtuvo el resultado WARN, sin alertas High.
+
+Estos controles ya cuentan con validaciones locales. Su integración en GitHub Actions constituye el siguiente paso para completar la automatización del pipeline DevSecOps.
 
 ## 13. Referencias y evidencias
 
