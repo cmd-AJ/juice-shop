@@ -1,0 +1,7 @@
+FROM filebeat-*
+| WHERE fields.fuente == "waf-access"
+| DISSECT message "%{ip_origen} %{resto}"
+| EVAL minuto = DATE_TRUNC(1 minute, @timestamp)
+| STATS solicitudes = COUNT(*) BY ip_origen, minuto
+| WHERE solicitudes >= 10
+| SORT solicitudes DESC
