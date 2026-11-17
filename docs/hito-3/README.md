@@ -291,4 +291,4 @@ En `ALLOWED_METHODS` se incorporó `PUT` para que la PoC-03 no fuera rechazada p
 
 ## 9. Uso de IA
 
-Se utilizó ChatGPT para estructurar pruebas controladas, interpretar evidencias y preparar la documentación. Se utilizó Claude en el navegador para crear el Data View `filebeat-*` y el dashboard de Kibana. Toda configuración y conclusión debe ser revisada y validada por los integrantes del equipo, conforme a las reglas de uso de IA del curso.
+Se utilizó ChatGPT para estructurar pruebas controladas, interpretar evidencias y preparar la documentación. Se utilizó Claude en el navegador para crear el Data View `filebeat-*` y el dashboard de Kibana. 
