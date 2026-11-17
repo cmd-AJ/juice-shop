@@ -834,7 +834,7 @@ De acuerdo con los requisitos del proyecto final, deben documentarse al menos cu
 | PoC-01 | Redirección abierta (Off-site Redirect) | GET /redirect?to=<url externa> | A05 Injection | CWE-601 | AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:L/A:N | 4.3 (Media) |
 | PoC-02 | Ausencia de token anti-CSRF | POST /dataerasure | A01 Broken Access Control | CWE-352 | AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:N | 6.5 (Media) |
 | PoC-03 | Creación de reseña sin autenticación (suplantación de autor) | PUT /rest/products/:id/reviews | A01 Broken Access Control | CWE-862 | AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N | 5.3 (Media) |
-| PoC-04 | Bypass del WAF: el puerto de la aplicación (3000) queda expuesto junto al del WAF (8080) | GET http://localhost:3000/ (cualquier ruta, sin pasar por 8080) | A02 Security Misconfiguration | CWE-693 | AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N | 5.3 (Media) |
+| PoC-04 | Lectura de archivos del servidor por XXE (XML External Entity) | POST /file-upload (archivo `.xml` con entidad externa) | A05 Security Misconfiguration | CWE-611 | AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N | 7.5 (Alta) |
 
 
 Los resultados del Red Team deberán compararse con los hallazgos de SAST y con las futuras detecciones del SIEM y bloqueos del WAF.
