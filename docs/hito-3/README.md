@@ -92,18 +92,37 @@ Las solicitudes se registraron en `access.log`. Se debe distinguir entre **una s
 
 ### 5.2 Revalidación del Red Team sobre la versión integrada (`20.4.0-SNAPSHOT`)
 
-El Red Team repitió las cuatro PoC sobre la **versión integrada del repositorio**, a través del mismo WAF (`http://localhost:8080`, ModSecurity + CRS en modo `On`). La versión se confirmó con `GET /rest/admin/application-version` → `{"version":"20.4.0-SNAPSHOT"}`. Las evidencias crudas (headers, body y código HTTP por PoC) están en `waf-siem/evidencias/poc_20261117_161550/`.
+El Red Team repitió las cuatro PoC sobre la **versión integrada del repositorio** (`20.4.0-SNAPSHOT`, confirmada con `GET /rest/admin/application-version`), a través del mismo WAF (`http://localhost:8080`). Para separar **detección** de **bloqueo**, se ejecutaron en tres escenarios controlados:
 
-Ninguna de las cuatro PoC es un payload de inyección (XSS/SQLi), por lo que el CRS las deja pasar; su mitigación corresponde a la capa de aplicación (Hito 4).
+| Escenario | `MODSEC_RULE_ENGINE` | `ALLOWED_METHODS` | Evidencias |
+|---|---|---|---|
+| **A** — Detección | `DetectionOnly` | sin `PUT` | `waf-siem/evidencias/poc_20261117_161550/` |
+| **B** — Bloqueo, método restrictivo | `On` | sin `PUT` | `waf-siem/evidencias/poc_20261117_170506/` |
+| **C** — Bloqueo, config realista | `On` | con `PUT` | `waf-siem/evidencias/poc_20261117_170752/` |
 
-| PoC | Vulnerabilidad | Endpoint | Código HTTP | Resultado | WAF | CVSS v3.1 (propuesto) |
+> El escenario **C** es el comparable con el Blue Team (modo `On` + `PUT` permitido), porque el endpoint de reseñas de Juice Shop *es* un `PUT`: una política que prohíba `PUT` también rompe la funcionalidad legítima de la aplicación.
+
+**Resultados por escenario (código HTTP a través del WAF):**
+
+| PoC | Endpoint | A (Detect.) | B (On, sin PUT) | C (On, con PUT) | ¿WAF bloquea la vuln.? | CVSS (propuesto) |
 |---|---|---|---|---|---|---|
-| 01 | Open Redirect (CWE-601) | `GET /redirect` | 302 | Confirmada | Permitió | 6.1 (Media) |
-| 02 | CSRF (CWE-352) | `POST /dataerasure` | 200 | Confirmada a nivel app (ver caveat) | Permitió | 6.5 (Media) |
-| 03 | Falta de autorización en reseñas (CWE-862) | `PUT /rest/products/1/reviews` | 201 | Confirmada | Permitió | 5.3 (Media) |
-| 04 | XXE (CWE-611) | `POST /file-upload` | 410 | No demostrada | N/A | — |
+| 01 — Open Redirect (CWE-601) | `GET /redirect` | 302 | 302 | 302 | **No** | 6.1 (Media) |
+| 02 — CSRF (CWE-352) | `POST /dataerasure` | 200 | 200 | 200 | **No** | 6.5 (Media) |
+| 03 — Reseñas sin auth (CWE-862) | `PUT /rest/products/1/reviews` | 201 | 403\* | 201 | **No** (\*403 por método) | 5.3 (Media) |
+| 04 — XXE (CWE-611) | `POST /file-upload` | 410 | 410 | 410 | N/A (no demostrada) | — |
 
-> Los valores CVSS son **propuestos** por el Red Team; ajústense según la rúbrica del curso.
+> \* El 403 del escenario B lo produce la regla `911100` (método `PUT` no permitido), **no** una detección de la falta de autorización. Con `PUT` permitido (escenario C, el realista) la petición pasa (201). Los valores CVSS son **propuestos**; ajústense a la rúbrica del curso.
+
+**Evidencia de detección (escenario A, `DetectionOnly`).** En modo detección, Kibana (`fields.fuente: "waf-audit"`) registró eventos de auditoría de ModSecurity para dos PoC, confirmando que el WAF **ve** parte del tráfico aunque no lo bloquee en la configuración realista:
+
+| PoC | URI auditada | Reglas CRS (`ruleId`) | Interpretación |
+|---|---|---|---|
+| 03 — Reseñas | `/rest/products/1/reviews` | `911100`, `949110` | `911100` marca el **método** `PUT`; `949110` es la evaluación de anomalía. No detecta la falla de autorización. |
+| 04 — XXE | `/file-upload` | (sin `ruleId` específico) | Evento de auditoría sin regla concreta; la app responde `410`. |
+
+Las PoC 01 (`/redirect`) y 02 (`/dataerasure`) **no** generaron evento de auditoría: solo quedaron en el log de acceso (`fields.fuente: "waf-access"`). El WAF no las detecta en absoluto.
+
+**Conclusión de la revalidación.** En la configuración realista (escenario C), el WAF **no bloquea ninguna de las cuatro PoC**. El único bloqueo observado (PoC-03 en escenario B) fue un artefacto de una política de métodos sobre-restrictiva que además rompería la funcionalidad legítima de reseñas. Esto confirma que el OWASP CRS no mitiga vulnerabilidades de lógica de negocio, control de acceso, CSRF ni open redirect — su fuerte es la inyección (XSS/SQLi, bloqueadas en la sección 4). La remediación corresponde al código (Hito 4).
 
 #### PoC 01 — Open Redirect
 
@@ -164,7 +183,7 @@ curl -i -X PUT http://localhost:8080/rest/products/1/reviews \
   -d '{"message":"PoC sin autenticacion","author":"anon@poc"}'
 ```
 
-- **Resultado observado.** `HTTP/1.1 201`. La reseña se crea sin cabecera `Authorization` ni sesión. El WAF no bloqueó. (Blue Team observó lo mismo en v20.3.0 sobre el producto 24; aquí sobre el producto 1.)
+- **Resultado observado.** En la configuración realista (escenario C, `On` + `PUT` permitido) → `HTTP/1.1 201`: la reseña se crea sin `Authorization` ni sesión y el WAF no la bloquea. En el escenario B (`On` sin `PUT`) → `403`, pero por la regla `911100` (método no permitido), **no** por la falla de autorización — y esa política también rompería las reseñas legítimas. Blue Team observó 201 en v20.3.0 (producto 24) con `PUT` permitido; aquí producto 1.
 - **Impacto.** Inyección de contenido y suplantación de autoría (spam, reseñas falsas, abuso de reputación).
 - **CVSS v3.1:** `AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N` → **5.3 (Media)**.
 - **Recomendación (H4).** Exigir autenticación y derivar `author` del usuario autenticado del token, no del cuerpo de la petición.
@@ -184,26 +203,38 @@ XML
 curl -i -X POST http://localhost:8080/file-upload -F "file=@xxe.xml"
 ```
 
-- **Resultado observado.** `HTTP/1.1 410 Gone` generado por la aplicación. No se obtuvo contenido del archivo ni evidencia de procesamiento de la entidad externa. (Coincide con v20.3.0.)
+- **Resultado observado.** `HTTP/1.1 410 Gone` generado por la aplicación en los tres escenarios. En `DetectionOnly` generó un evento de auditoría (sin `ruleId` específico), pero el WAF no bloquea y la app responde 410. No se obtuvo contenido del archivo ni evidencia de procesamiento de la entidad externa. (Coincide con v20.3.0.)
 - **Interpretación.** El `410` sugiere que el endpoint/flujo de parseo XML fue deshabilitado o retirado. **XXE no confirmada** en `20.4.0-SNAPSHOT`.
 - **Decisión recomendada.** Documentar como **no explotable en la versión integrada** (con la evidencia del 410), o sustituir por otra vulnerabilidad real presente en esta versión. No reportarla como confirmada.
 
 ### 5.3 Consistencia entre versiones
 
-Los resultados coinciden en ambas versiones, lo que respalda que los hallazgos no dependen de la imagen de laboratorio y aplican a la versión integrada del equipo:
+Comparando la **configuración equivalente** (modo `On` + `PUT` permitido): escenario C del Red Team sobre `20.4.0-SNAPSHOT` vs las pruebas del Blue Team sobre `v20.3.0`. Los resultados coinciden, lo que respalda que los hallazgos no dependen de la imagen de laboratorio y aplican a la versión integrada del equipo:
 
-| PoC | `v20.3.0` (Blue, WAF) | `20.4.0-SNAPSHOT` (Red, WAF) | Consistencia |
+| PoC | `v20.3.0` (Blue, `On`+PUT) | `20.4.0-SNAPSHOT` (Red, escenario C) | Consistencia |
 |---|---|---|---|
 | 01 — Open Redirect | 302, no bloqueó | 302, no bloqueó | ✔ igual |
 | 02 — CSRF `/dataerasure` | 200, no bloqueó | 200, no bloqueó | ✔ igual |
 | 03 — Reseñas sin auth | 201, no bloqueó | 201, no bloqueó | ✔ igual |
 | 04 — XXE | 410, no confirmada | 410, no confirmada | ✔ igual |
 
-**Correlación con SIEM (pendiente).** Las cuatro PoC de la revalidación (5.2) necesitan su correlación explícita en Kibana (hora, ruta, payload, estado, identificador de auditoría si existe). La corrida quedó registrada bajo el timestamp `20261117_161550` (local, UTC-6). Consulta de referencia en Discover:
+**Correlación con SIEM.** Los eventos de la corrida en `DetectionOnly` (escenario A, timestamp `20261117_161550`, local UTC-6) se ubican en Kibana con el Data View `filebeat-*`. El campo de la ruta es `modsec.transaction.request.uri` (presente solo en los docs `waf-audit`); los de acceso usan `fields.fuente: "waf-access"`. Para aislar las detecciones de ModSecurity:
 
 ```
-url.path: ("/redirect" or "/dataerasure" or "/rest/products/1/reviews" or "/file-upload")
+fields.fuente: "waf-audit"
 ```
+
+Esto devuelve los dos eventos auditados (`/rest/products/1/reviews` con `911100`+`949110`, y `/file-upload`), que son la evidencia de "detección sin bloqueo".
+
+### 5.4 Nota de interpretación conjunta (WAF vs código)
+
+Que el WAF no bloquee las cuatro PoC en la configuración realista **no es una deficiencia de la implementación del Blue Team**, sino una característica esperada de los WAF basados en firmas:
+
+- El WAF (ModSecurity + OWASP CRS) **detecta y bloquea ataques de inyección** —XSS, SQLi, escaneo— que es exactamente lo que demuestra la sección 4 (HTTP 403, evidencias 11 y 12). Ese es el entregable del WAF y está cumplido.
+- Las cuatro PoC del Red Team (open redirect, CSRF, falta de autorización, XXE) pertenecen a **clases de vulnerabilidad de lógica de negocio y control de acceso**, sin firma reconocible en la petición. Ningún WAF las bloquea de forma genérica; su remediación corresponde al **código (Hito 4)**.
+- Aun así, en modo `DetectionOnly` el WAF **detectó** dos de ellas (reseñas y XXE, con sus reglas en Kibana), lo que muestra valor como capa de monitoreo incluso donde no bloquea.
+
+En otras palabras, ambos equipos coinciden en la misma conclusión (el propio cuadro del Blue Team en la sección 5.1 ya marca "¿bloqueó? No" para las cuatro PoC). El resultado ilustra **defensa en profundidad**: el WAF es una capa (inyección) y el código es otra (lógica, acceso, CSRF). No se contrapone al trabajo del Blue Team; lo complementa y motiva el Hito 4.
 
 ## 6. Análisis de falsos positivos y ajustes
 
