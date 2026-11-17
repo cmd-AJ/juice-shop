@@ -50,15 +50,47 @@ void describe('/rest/products/:id/reviews', () => {
     assert.equal(res.status, 400)
   })
 
-  void it('PUT single product review can be created', async () => {
+  void it('PUT single product review requires an authenticated user', async () => {
     const res = await request(app)
       .put('/rest/products/1/reviews')
       .send({
-        message: 'Lorem Ipsum',
-        author: 'Anonymous'
+        message: 'H4_ANONYMOUS_REVIEW',
+        author: 'H4-ATTACKER'
       })
+
+    assert.equal(res.status, 401)
+  })
+
+  void it('PUT single product review uses the authenticated user identity', async () => {
+    const { token } = await login(app, {
+      email: 'bjoern.kimminich@gmail.com',
+      password: 'bW9jLmxpYW1nQGhjaW5pbW1pay5ucmVvamI='
+    })
+
+    const message = 'H4_AUTHENTICATED_REVIEW'
+
+    const res = await request(app)
+      .put('/rest/products/1/reviews')
+      .set({ Authorization: `Bearer ${token}` })
+      .send({
+        message,
+        author: 'H4-ATTACKER'
+      })
+
     assert.equal(res.status, 201)
-    assert.ok(res.headers['content-type']?.includes('application/json'))
+
+    const reviewsRes = await request(app)
+      .get('/rest/products/1/reviews')
+
+    assert.equal(reviewsRes.status, 200)
+
+    const createdReview = reviewsRes.body.data.find(
+      (review: { message: string }) => review.message === message
+    )
+
+    assert.ok(createdReview)
+    assert.equal(createdReview.author, 'bjoern.kimminich@gmail.com')
+    assert.notEqual(createdReview.author, 'H4-ATTACKER')
   })
 })
 
