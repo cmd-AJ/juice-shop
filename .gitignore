@@ -71,3 +71,8 @@ config/*.yml
 # Misc
 .playwright-mcp/
 cypress/screenshots/
+
+# Local environment files
+/waf-siem/.env
+
+/waf-siem/.env

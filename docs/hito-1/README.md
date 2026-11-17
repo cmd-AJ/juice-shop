@@ -316,80 +316,44 @@ Toda la superficie se evalúa sobre la instancia local del grupo, en `http://loc
 
 \* El control de rol en `/rest/admin/*` es justamente lo que se debe verificar: si responde sin sesión privilegiada, es el hallazgo.
 
-### Hallazgos del DAST que pasan a PoC del Hito 2
-
-De la Etapa 5, estos son los que el Equipo rojo convertirá en PoC reproducible (al menos 4, según el enunciado):
-
-| V-xx | Hallazgo | CWE | Endpoint | Amenaza |
-|---|---|---|---|---|
-| V-13 | SQLi en login | CWE-89 | `/rest/user/login` | T-01 |
-| V-14 | Registro como administrador | CWE-915 | `/api/Users` | T-10 |
-| V-01 | Redirección abierta | CWE-601 | `/redirect?to=` | T-03 |
-| V-11 | Archivos internos en `/ftp` | CWE-538 | `/ftp/*` | T-07 |
-
-Reserva (si se necesita una quinta): IDOR en `/rest/basket/:id` (T-11) y edición de reseña ajena (T-04 / V-12).
-
-### Bypass del WAF
-
-El WAF (P1, ModSecurity + CRS) filtra en `:8080`, pero la app también escucha en `:3000`. Si `:3000` responde a los mismos ataques sin bloquearlos, todo el filtrado del borde se evita apuntando al puerto directo.
-
-**Verificación (a ejecutar contra localhost, documentar comando, hora y salida):**
-
-```bash
-# ¿Responde el puerto directo?
-curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/rest/admin/application-version
-
-# Mismo payload de SQLi contra el WAF (8080) y contra la app directa (3000)
-curl -s -X POST http://localhost:8080/rest/user/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"'"'"' OR 1=1--","password":"x"}' -o /dev/null -w "8080 -> %{http_code}\n"
-
-curl -s -X POST http://localhost:3000/rest/user/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"'"'"' OR 1=1--","password":"x"}' -o /dev/null -w "3000 -> %{http_code}\n"
-```
-
-> **Resultado:** _(pegar aquí la salida real)_. Si `:3000` acepta el payload que `:8080` bloquea, se documenta como **bypass del WAF** y se recuerda que en H3 el WAF debe cubrir ese camino o cerrarse el puerto.
-
-*El mapa visual se guarda en esta carpeta como `superficie.png` (puede exportarse del site map de Burp o del spider de ZAP).*
 
 ---
 
 ## Casos de abuso
 
-*Cada caso deriva de una amenaza (T-xx) y su vulnerabilidad (V-xx) y será la base de un PoC del Hito 2.*
+*Cada caso deriva de una amenaza (T-xx) y su vulnerabilidad, y es la base de una PoC del Hito 2. Formato Dado / Cuando / Entonces.*
 
-### CA-01 · Suplantar al administrador con SQLi en el login
-*(T-01 / V-13 / RS-01)*
+### CA-01 · Redirección abierta para phishing
+*(T-03 / V-01 / RS-09 → PoC-01)*
 
-- **Dado** un atacante anónimo en la página de login, sin credenciales válidas.
-- **Cuando** envía en el campo `email` una entrada como `' OR 1=1--` y una contraseña cualquiera.
-- **Entonces** el sistema debe rechazar el intento y no emitir un JWT; además el evento debe quedar registrado (RS-01, RS-07). *(Comportamiento vulnerable esperado: inicia sesión como el primer usuario, normalmente el administrador.)*
+- **Dado** un atacante que distribuye un enlace cuyo dominio base es el de la tienda legítima.
+- **Cuando** la víctima abre `GET /redirect?to=http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop`, donde el parámetro `to` incluye un dominio permitido solo para burlar la validación con `includes()`.
+- **Entonces** la aplicación debe redirigir únicamente a destinos de una lista exacta de permitidos y rechazar el externo (RS-09). *(Comportamiento vulnerable esperado: responde `302 Found` con `Location` hacia el sitio del atacante.)*
 
-### CA-02 · Leer la cesta de otro usuario (IDOR)
-*(T-11 / RS-02)*
+### CA-02 · Borrado de datos forzado por CSRF
+*(T-05 / V-02 / RS-10 → PoC-02)*
 
-- **Dado** un cliente autenticado con su propio token y cesta (por ejemplo `id = 1`).
+- **Dado** un cliente autenticado cuya sesión viaja en la cookie `token`.
+- **Cuando** la víctima visita una página externa que auto-envía un formulario `POST /dataerasure` (con `email` y `securityAnswer`) sin ningún token anti-CSRF, aprovechando que el navegador adjunta la cookie automáticamente.
+- **Entonces** el servidor debe exigir un token anti-CSRF y cookies `SameSite`, y rechazar la petición originada en otro sitio (RS-10). *(Comportamiento vulnerable esperado: la solicitud de borrado de datos se procesa sin token anti-CSRF.)*
+
+### CA-03 · Publicar una reseña suplantando a otro usuario
+*(T-04 / V-12 / RS-02 → PoC-03)*
+
+- **Dado** un atacante anónimo, sin cuenta ni sesión.
+- **Cuando** envía `PUT /rest/products/1/reviews` con un cuerpo JSON que fija el campo `author` al correo de otro usuario, sin cabecera `Authorization` ni cookie.
+- **Entonces** la ruta debe exigir autenticación y tomar el autor de la sesión, no del cuerpo de la petición (RS-02). *(Comportamiento vulnerable esperado: responde `201 Created` y publica la reseña atribuida a un usuario que no participó.)*
+
+### CA-04 · Lectura de archivos del servidor por XXE
+*(RS-06 · componente P7 subida de archivos → PoC-04)*
+
+- **Dado** un atacante con acceso al endpoint de subida de archivos, sin autenticación.
+- **Cuando** sube a `POST /file-upload` un archivo `.xml` que declara una entidad externa (`SYSTEM`) apuntando a un archivo del servidor.
+- **Entonces** el parser XML debe tener deshabilitadas las entidades externas y rechazar el documento (RS-06). *(Comportamiento vulnerable esperado: el servidor resuelve la entidad y refleja el contenido del archivo leído, confirmando la divulgación de información.)*
+
+### CA-05 · Acceder a la cesta de otro usuario (IDOR)
+*(T-11 / RS-02 — reserva)*
+
+- **Dado** un cliente autenticado con su propia cesta (por ejemplo `id = 1`).
 - **Cuando** solicita `GET /rest/basket/2` cambiando el identificador por el de otro usuario.
-- **Entonces** el sistema debe responder con un error de autorización y no devolver la cesta ajena (RS-02). *(Comportamiento vulnerable esperado: devuelve el contenido de la cesta del otro usuario.)*
-
-### CA-03 · Registrarse como administrador
-*(T-10 / V-14 / RS-03)*
-
-- **Dado** un atacante anónimo con acceso al registro de usuarios.
-- **Cuando** envía a `POST /api/Users` el cuerpo del registro agregando el campo `"role": "admin"`.
-- **Entonces** el servidor debe ignorar el campo `role` y crear la cuenta siempre como `customer` (RS-03). *(Comportamiento vulnerable esperado: se crea una cuenta con privilegios de administrador.)*
-
-### CA-04 · Lectura de archivos del servidor vía XXE
-*(T-12 / V-17 / RS-11)*
-
-- **Dado** un atacante que sube un archivo `.xml` a través del formulario de quejas (`POST /file-upload`), sin necesidad de ninguna sesión autenticada.
-- **Cuando** el archivo define una entidad externa (`<!ENTITY xxe SYSTEM "file:///ruta/al/servidor">`) y la aplicación la procesa con el parser XML.
-- **Entonces** la aplicación debe rechazar la carga de entidades externas y DTDs externos, sin reflejar el contenido de ningún archivo del servidor en la respuesta (RS-11). *(Comportamiento vulnerable esperado: el parser resuelve la entidad y el contenido del archivo del servidor queda reflejado en el mensaje de error, confirmado en la PoC-04 con el fragmento `bjoern.kimminich` del `package.json` real del proyecto.)*
-
-### CA-05 · Editar la reseña de otro usuario
-*(T-04 / V-12 / RS-02)*
-
-- **Dado** un cliente autenticado que no es el autor de una reseña.
-- **Cuando** envía una petición para modificar esa reseña con el identificador de otro usuario.
-- **Entonces** la app debe verificar que el token pertenece al autor y rechazar la edición (RS-02). *(Comportamiento vulnerable esperado: la reseña ajena se modifica sin restricción.)*
+- **Entonces** el sistema debe verificar que la cesta pertenece al usuario del token y responder con un error de autorización (RS-02). *(Comportamiento vulnerable esperado: devuelve el contenido de la cesta ajena.)*

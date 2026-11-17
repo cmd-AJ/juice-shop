@@ -45,7 +45,7 @@ jobs:
           name: semgrep-report
           path: semgrep-report.json
           if-no-files-found: warn
-  
+
   sca-npm-audit:
     name: SCA - npm audit
     runs-on: ubuntu-latest
@@ -94,3 +94,195 @@ jobs:
             frontend/npm-audit-frontend.json
           if-no-files-found: warn
 
+  sbom-syft:
+    name: SBOM - Syft CycloneDX
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Syft
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin v1.55.0
+          syft version
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          syft scan dir:. \
+            --exclude='**/node_modules/**' \
+            --exclude='**/.git/**' \
+            --exclude='**/dist/**' \
+            --exclude='**/coverage/**' \
+            -o cyclonedx-json=sbom.cdx.json
+
+      - name: Validate SBOM
+        run: |
+          python -m json.tool sbom.cdx.json > /dev/null
+          echo "SBOM JSON validated"
+          ls -lh sbom.cdx.json
+
+      - name: Upload SBOM artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+          if-no-files-found: error
+
+  dast-zap:
+    name: DAST - OWASP ZAP Baseline
+    runs-on: ubuntu-latest
+
+    services:
+      juice-shop:
+        image: bkimminich/juice-shop:latest
+        ports:
+          - 3000:3000
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Wait for Juice Shop
+        run: |
+          echo "Waiting for Juice Shop on port 3000..."
+
+          for i in {1..30}; do
+            if curl --silent --fail http://127.0.0.1:3000/ > /dev/null; then
+              echo "Juice Shop is responding"
+              exit 0
+            fi
+
+            echo "Attempt $i/30..."
+            sleep 5
+          done
+
+          echo "Juice Shop did not become available"
+          exit 1
+
+      - name: Run OWASP ZAP Baseline
+        run: |
+          set +e
+
+          docker run --rm \
+            --network host \
+            -v "${GITHUB_WORKSPACE}:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t http://127.0.0.1:3000 \
+            -r zap-report.html \
+            -J zap-report.json
+
+          ZAP_EXIT_CODE=$?
+
+          echo "ZAP exit code: $ZAP_EXIT_CODE"
+
+          if [ ! -f zap-report.json ]; then
+            echo "ZAP did not generate the JSON report"
+            exit 1
+          fi
+
+          echo "ZAP JSON report generated"
+
+      - name: Upload ZAP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-reports
+          path: |
+            zap-report.html
+            zap-report.json
+          if-no-files-found: warn
+
+  security-gate:
+    name: Security Gate - ZAP
+    runs-on: ubuntu-latest
+    needs: dast-zap
+
+    steps:
+      - name: Download ZAP reports
+        uses: actions/download-artifact@v4
+        with:
+          name: zap-reports
+          path: zap-results
+
+      - name: Evaluate security policy
+        run: |
+          python <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report_path = Path("zap-results/zap-report.json")
+
+          if not report_path.exists():
+              print("ERROR: ZAP JSON report was not found.")
+              sys.exit(1)
+
+          try:
+              with report_path.open(encoding="utf-8") as file:
+                  report = json.load(file)
+          except (json.JSONDecodeError, OSError) as error:
+              print(f"ERROR: Could not read ZAP report: {error}")
+              sys.exit(1)
+
+          if not isinstance(report.get("site"), list):
+              print("ERROR: ZAP report does not contain a valid site list.")
+              sys.exit(1)
+
+          counts = {
+              "3": 0,
+              "2": 0,
+              "1": 0,
+              "0": 0
+          }
+
+          for site in report.get("site", []):
+              for alert in site.get("alerts", []):
+                  risk = str(alert.get("riskcode", ""))
+
+                  if risk not in counts:
+                      continue
+
+                  instances = alert.get("instances", [])
+                  counts[risk] += len(instances) if instances else 1
+
+          print("\n========== SECURITY GATE ==========")
+          print(f"High:          {counts['3']}")
+          print(f"Medium:        {counts['2']}")
+          print(f"Low:           {counts['1']}")
+          print(f"Informational: {counts['0']}")
+
+          if counts["3"] > 0:
+              result = "FAIL - High risk findings detected"
+              exit_code = 1
+          elif counts["2"] > 0:
+              result = "WARN - Medium risk findings detected"
+              exit_code = 0
+          else:
+              result = "PASS - No High or Medium risk findings"
+              exit_code = 0
+
+          print(f"\nResult: {result}")
+
+          with open("security-gate-summary.txt", "w", encoding="utf-8") as file:
+              file.write("SECURITY GATE SUMMARY\n")
+              file.write("=====================\n")
+              file.write(f"High: {counts['3']}\n")
+              file.write(f"Medium: {counts['2']}\n")
+              file.write(f"Low: {counts['1']}\n")
+              file.write(f"Informational: {counts['0']}\n")
+              file.write(f"Result: {result}\n")
+
+          sys.exit(exit_code)
+          PY
+
+      - name: Upload Security Gate summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-gate-summary
+          path: security-gate-summary.txt
+          if-no-files-found: warn
