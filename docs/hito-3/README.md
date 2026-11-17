@@ -226,16 +226,6 @@ fields.fuente: "waf-audit"
 
 Esto devuelve los dos eventos auditados (`/rest/products/1/reviews` con `911100`+`949110`, y `/file-upload`), que son la evidencia de "detección sin bloqueo".
 
-### 5.4 Nota de interpretación conjunta (WAF vs código)
-
-Que el WAF no bloquee las cuatro PoC en la configuración realista **no es una deficiencia de la implementación del Blue Team**, sino una característica esperada de los WAF basados en firmas:
-
-- El WAF (ModSecurity + OWASP CRS) **detecta y bloquea ataques de inyección** —XSS, SQLi, escaneo— que es exactamente lo que demuestra la sección 4 (HTTP 403, evidencias 11 y 12). Ese es el entregable del WAF y está cumplido.
-- Las cuatro PoC del Red Team (open redirect, CSRF, falta de autorización, XXE) pertenecen a **clases de vulnerabilidad de lógica de negocio y control de acceso**, sin firma reconocible en la petición. Ningún WAF las bloquea de forma genérica; su remediación corresponde al **código (Hito 4)**.
-- Aun así, en modo `DetectionOnly` el WAF **detectó** dos de ellas (reseñas y XXE, con sus reglas en Kibana), lo que muestra valor como capa de monitoreo incluso donde no bloquea.
-
-En otras palabras, ambos equipos coinciden en la misma conclusión (el propio cuadro del Blue Team en la sección 5.1 ya marca "¿bloqueó? No" para las cuatro PoC). El resultado ilustra **defensa en profundidad**: el WAF es una capa (inyección) y el código es otra (lógica, acceso, CSRF). No se contrapone al trabajo del Blue Team; lo complementa y motiva el Hito 4.
-
 ## 6. Análisis de falsos positivos y ajustes
 
 Se revisó `waf-siem/waf/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf`. Este archivo **ya contenía** la regla local `10001`, limitada al encabezado `Host` con IP `127.0.0.1`, que excluye **solo ese objetivo** de la evaluación de la regla CRS `920350` (encabezado `Host` con dirección IP numérica). No se desactivó el conjunto de reglas de OWASP CRS.
