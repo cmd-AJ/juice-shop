@@ -7,7 +7,6 @@ import config from 'config'
 import { Server } from 'socket.io'
 import { notifications, challenges } from '../../data/datacache'
 import * as challengeUtils from '../challengeUtils'
-import * as security from '../insecurity'
 
 let firstConnectedSocket: any = null
 
@@ -39,10 +38,6 @@ const registerWebsocketEvents = (server: any) => {
     socket.on('verifyLocalXssChallenge', (data: any) => {
       challengeUtils.solveIf(challenges.localXssChallenge, () => { return data?.includes('<iframe src="javascript:alert(`xss`)">') ?? false })
       challengeUtils.solveIf(challenges.xssBonusChallenge, () => { return data?.includes(config.get('challenges.xssBonusPayload')) ?? false })
-    })
-
-    socket.on('verifySvgInjectionChallenge', (data: any) => {
-      challengeUtils.solveIf(challenges.svgInjectionChallenge, () => { return data?.match(/.*\.\.\/\.\.\/\.\.[\w/-]*?\/redirect\?to=https?:\/\/cataas.com\/cat.*/) && security.isRedirectAllowed(data) })
     })
 
     socket.on('verifyCloseNotificationsChallenge', (data: any) => {
