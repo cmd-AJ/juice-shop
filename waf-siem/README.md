@@ -216,3 +216,81 @@ En `docker-compose.yml`, eliminen los servicios `elasticsearch` y `kibana`. Elas
 docker compose down        # conserva los datos
 docker compose down -v     # borra logs e índices
 ```
+
+---
+
+## 7. Evidencias de validación Blue Team — 20 de noviembre de 2026
+
+### 7.1 Configuración del WAF
+
+Se realizó la transición del motor ModSecurity desde `DetectionOnly` hasta `On`.
+
+Configuración validada:
+- `MODSEC_RULE_ENGINE=On`
+- `BLOCKING_PARANOIA=1`
+- OWASP Core Rule Set (CRS) 4.30.0
+- Backend: `http://host.docker.internal:3000`
+- WAF local: `http://localhost:8080`
+
+El contenedor WAF quedó en estado `healthy` y se confirmó que el motor estaba habilitado mediante los registros de auditoría.
+
+### 7.2 Detección y bloqueo de ataques
+
+Se validaron tres patrones de ataque. Los eventos se encontraron tanto en el registro de auditoría de ModSecurity como en Elasticsearch, mediante el índice `filebeat-*` y el origen `fields.fuente: waf-audit`.
+
+| Patrón | Payload o indicador | Reglas detectadas | Respuesta |
+|---|---|---|---|
+| SQL Injection | `1 UNION SELECT NULL` | 942100, 942190, 942360, 949110 | HTTP 403 |
+| XSS | `<script>alert(1)</script>` | 941100, 941110, 941160, 941390, 949110 | HTTP 403 |
+| Scanner | User-Agent `sqlmap` | 913100, 949110 | HTTP 403 |
+
+Las tres transacciones recientes aparecen con:
+- `response.http_code: 403`
+- `transaction.is_interrupted: true`
+- `producer.secrules_engine: Enabled`
+
+Evidencia temporal registrada en Elasticsearch (UTC, 20/11/2026):
+- SQL Injection: `12:53:03.362Z`
+- XSS: `12:53:03.363Z`
+- Scanner: `12:53:03.364Z`
+
+Los eventos contienen los identificadores de las reglas y los datos que activaron las detecciones. La regla 949110 registra que se superó el umbral de anomalía.
+
+### 7.3 Validación de tráfico legítimo con WAF en modo On
+
+Se realizaron solicitudes a través del WAF y se verificó que las rutas legítimas respondieran correctamente.
+
+| Solicitud | Resultado |
+|---|---|
+| Página principal `/` | HTTP 200 |
+| Búsqueda `/rest/products/search?q=apple` | HTTP 200 |
+| API `/api/Products` | HTTP 200 |
+
+No se observaron falsos positivos en estas tres solicitudes.
+
+Durante la revisión también aparecieron respuestas HTTP 500 en `/rest/products`. Esta ruta no corresponde a un endpoint válido de esta versión de Juice Shop; los registros examinados no muestran interrupción de ModSecurity ni reglas activadas. Por tanto, no se clasificaron como falsos positivos del WAF.
+
+El análisis de falsos positivos realizado hasta esta etapa se limita a las rutas probadas. Deben validarse otros flujos legítimos de la aplicación antes de considerar exhaustivo el análisis.
+
+### 7.4 Fase de observación DetectionOnly
+
+Antes de habilitar el bloqueo se comprobaron detecciones en modo `DetectionOnly`:
+
+- SQL Injection: reglas 942100, 942190 y 942360.
+- XSS: reglas 941100, 941110, 941160 y 941390.
+- Scanner: regla 913100.
+
+En esa fase las solicitudes de prueba recibían HTTP 200 y `transaction.is_interrupted: false`. Estos eventos se conservan como evidencia de la fase de observación y no deben confundirse con los bloqueos posteriores en modo `On`.
+
+### 7.5 Estado de integración SIEM y tareas pendientes
+
+Se verificó que Filebeat enviaba eventos de auditoría a Elasticsearch. La consulta de validación devolvió 18 documentos de `waf-audit`, incluyendo los eventos de detección y bloqueo descritos anteriormente.
+
+**Pendiente de completar:**
+- Recuperar y verificar el acceso a Kibana.
+- Crear el Data View `filebeat-*` usando `@timestamp`.
+- Construir el dashboard con evolución temporal, reglas detectadas, IP de origen, URI, payloads y solicitudes bloqueadas.
+- Exportar las búsquedas y el dashboard a `kibana-export.ndjson`.
+- Incorporar capturas de pantalla y evidencia de la demostración.
+
+El dashboard y su exportación no se consideran completados en esta etapa.
