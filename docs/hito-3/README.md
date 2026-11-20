@@ -375,20 +375,7 @@ Las imágenes están **incrustadas** mediante rutas relativas a `docs/hito-3/evi
 
 <img src="evidencias/23-validacion-exclusion-10030.png" alt="Validación del alcance de la exclusión 10030" width="920">
 
-## 8. Guion técnico para la demostración en vivo
-
-Para una revisión directa del catedrático, la secuencia recomendada es **mostrar el archivo → generar la solicitud → observar el registro en Kibana**.
-
-1. **Servicios:** ejecutar `docker compose -f waf-siem/docker-compose.yml ps` y comprobar `waf` y `elasticsearch` saludables; verificar que Kibana responda en `http://localhost:5601`.
-2. **Reglas desarrolladas:** abrir `waf-siem/waf/REQUEST-901-BLUE-TEAM-RULES.conf` y señalar los identificadores `10020`, `10021` y `10022`, sus campos y la acción `pass,log,auditlog`.
-3. **Prueba:** ejecutar uno de los tres comandos `curl.exe` de la sección 4.2; mostrar HTTP 403 y explicar que el bloqueo corresponde al CRS.
-4. **Kibana:** abrir `Hito 3 - WAF Security Monitoring`, seleccionar un rango que incluya la hora de la prueba (por ejemplo, **Last 24 hours**), pulsar **Refresh** y señalar las barras `10020`, `10021` y `10022` en la gráfica de reglas. Si una barra no aparece, revisar el tiempo seleccionado y la ingesta antes de concluir que la regla falló.
-5. **Exclusión controlada:** abrir `REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf`, mostrar `10030` y explicar que el objetivo excluido es **`ARGS:q` para `942190` bajo condiciones específicas**. Repetir las pruebas 200 / 403 / 403 de la sección 6.2.
-6. **Revalidación del Red Team:** abrir la sección 5.2 y mostrar los tres escenarios sobre `20.4.0-SNAPSHOT`: redirección `302`, CSRF `200`, reseñas `201` con `PUT` permitido, XXE `410` sin explotación confirmada. Explicar por qué el `403` de `911100` sin `PUT` permitido es un rechazo por método y no la solución de la vulnerabilidad. En Kibana, distinguir eventos `waf-audit` de registros de `waf-access` y correlacionar hora y ruta.
-
-**Precaución operativa:** no usar `docker compose down -v`, `docker system prune --volumes` ni restablecer Docker Desktop durante la preparación, porque podría perderse información del SIEM. Conviene iniciar el entorno y comprobar que Kibana carga antes de comenzar la exposición.
-
-## 9. Estado y pendientes de integración
+## 8. Estado y pendientes de integración
 
 **Completado y verificado:** WAF con OWASP CRS, ingesta hacia Elastic, dashboard, comparación `DetectionOnly`/`On`, tres reglas propias registrando auditorías, consulta manual de ráfagas, exclusión `10030` con pruebas de alcance y revalidación de las cuatro PoC por el Red Team sobre `20.4.0-SNAPSHOT` (sin afirmar protección donde no la hubo).
 
@@ -400,6 +387,6 @@ Para una revisión directa del catedrático, la secuencia recomendada es **mostr
 4. **PoC del Red Team:** la revalidación sobre `20.4.0-SNAPSHOT` ya está documentada en la sección 5.2. Para la demostración conjunta, correlacionar con el SIEM las horas, rutas, resultados y registros disponibles. **XXE sigue sin confirmarse en ambas versiones**, y la ausencia de bloqueo para PoC 01–03 debe reconocerse como riesgo pendiente de remediación en código.
 5. **Integración H4:** las vulnerabilidades de lógica de negocio requieren cambios de código, auditoría y repetición de PoC; un 403 del CRS no sustituye una remediación.
 
-## 10. Uso de IA
+## 9. Uso de IA
 
 Se utilizó **ChatGPT** para estructurar pruebas controladas, interpretar resultados y preparar la documentación. Se utilizó **Claude** en el navegador para configurar el Data View `filebeat-*` y el dashboard de Kibana. Las pruebas, configuraciones y conclusiones deben ser revisadas por los integrantes del equipo y citar el uso de IA conforme a las indicaciones de la UVG.
