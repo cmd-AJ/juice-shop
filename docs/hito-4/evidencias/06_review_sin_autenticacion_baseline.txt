@@ -1,4 +1,4 @@
-﻿=== H4: PRUEBA DE RESEÑA SIN AUTENTICACION ===
+=== H4: PRUEBA DE RESEÑA SIN AUTENTICACION ===
 Fecha: 2026-11-17 17:34:13
 Peticion: PUT http://localhost:3000/rest/products/1/reviews
 Authorization: NO ENVIADO

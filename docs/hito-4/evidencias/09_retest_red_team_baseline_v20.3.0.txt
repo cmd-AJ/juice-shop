@@ -1,0 +1,17 @@
+=== H4 - RE-TEST RED TEAM ===
+Fecha (UTC): 2026-11-20 22:36:42
+Objetivo:    http://localhost:3001
+
+--- PoC-01 Open Redirect: GET /redirect?to=... ---
+[PASS] PoC-01a - Destino permitido exacto -> HTTP 302 (esperado 302) Location='https://github.com/juice-shop/juice-shop'
+[FAIL] PoC-01b - Payload original (dominio externo + URL permitida en query) -> HTTP 302 (esperado 406) Location='http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop'
+[PASS] PoC-01c - Dominio engañoso (github.com.evil.example) -> HTTP 406 (esperado 406) Location='ninguna'
+[FAIL] PoC-01d - Ruta interna con URL permitida en query -> HTTP 302 (esperado 406) Location='/score-board?satisfyIndexOf=https://github.com/juice-shop/juice-shop'
+
+--- PoC-03 Reseñas: PUT /rest/products/1/reviews ---
+[FAIL] PoC-03a - PUT anónimo con author falsificado -> HTTP 201 (esperado 401) 
+[PASS] PoC-03b - PUT autenticado (jim) intentando firmar como admin -> HTTP 201 (esperado 201) 
+[FAIL] PoC-03c - Autor almacenado = 'admin@juice-sh.op' (esperado jim@juice-sh.op)
+[FAIL] PoC-03d - La reseña anónima sí aparece publicada
+
+RESULTADO: FAIL - Al menos una PoC corregida sigue siendo explotable
