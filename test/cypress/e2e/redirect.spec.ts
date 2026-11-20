@@ -1,4 +1,4 @@
-﻿describe('/redirect', () => {
+describe('/redirect', () => {
   describe('challenge "redirectChallenge"', () => {
     it('should show error page when supplying an unrecognized target URL', () => {
       cy.visit('/redirect?to=http://kimminich.de', {
@@ -16,7 +16,7 @@
         failOnStatusCode: false
       }).then((response) => {
         expect(response.status).to.eq(406)
-        expect(response.headers.location).to.be.undefined
+        expect(response.headers.location).to.equal(undefined)
       })
     })
   })

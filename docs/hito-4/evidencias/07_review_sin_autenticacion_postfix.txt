@@ -1,4 +1,4 @@
-﻿=== H4: PRUEBA POSTERIOR A LA CORRECCION ===
+=== H4: PRUEBA POSTERIOR A LA CORRECCION ===
 Fecha: 2026-11-17 17:42:51
 Peticion: PUT http://localhost:3000/rest/products/1/reviews
 Authorization: NO ENVIADO

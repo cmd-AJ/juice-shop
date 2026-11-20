@@ -1,4 +1,4 @@
-name: H2 - DevSecOps
+name: DevSecOps (H2-H4)
 
 on:
   push: {}
@@ -131,19 +131,48 @@ jobs:
           path: sbom.cdx.json
           if-no-files-found: error
 
-  dast-zap:
-    name: DAST - OWASP ZAP Baseline
+  h4-regression-tests:
+    name: H4 - Regression tests (fixes)
     runs-on: ubuntu-latest
-
-    services:
-      juice-shop:
-        image: bkimminich/juice-shop:latest
-        ports:
-          - 3000:3000
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Update npm
+        run: npm install --global npm@11.19.1 --ignore-scripts --no-audit --no-fund
+
+      - name: Install dependencies (builds frontend)
+        run: npm install --no-audit --no-fund
+
+      - name: Unit tests - Open Redirect allowlist
+        run: >
+          node --import ./test/server/helpers/test-env.mjs --import tsx --test --test-force-exit
+          test/server/insecurity.unit.test.ts test/server/redirect.unit.test.ts
+
+      - name: API tests - redirect and product reviews
+        run: >
+          node --import ./test/api/helpers/test-env.mjs --import tsx --test --test-force-exit
+          test/api/redirect.test.ts test/api/product-review.test.ts
+
+  dast-zap:
+    name: DAST - OWASP ZAP Baseline (team build)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Juice Shop from this branch
+        run: docker build -t juice-shop-team:${{ github.sha }} .
+
+      - name: Start Juice Shop
+        run: docker run -d --name juice-shop -p 3000:3000 juice-shop-team:${{ github.sha }}
 
       - name: Wait for Juice Shop
         run: |
@@ -186,6 +215,9 @@ jobs:
 
           echo "ZAP JSON report generated"
 
+      - name: Red Team retest - PoC-01 and PoC-03
+        run: bash docs/hito-4/retest-red-team.sh http://127.0.0.1:3000 retest-red-team.txt
+
       - name: Upload ZAP reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -194,6 +226,14 @@ jobs:
           path: |
             zap-report.html
             zap-report.json
+          if-no-files-found: warn
+
+      - name: Upload Red Team retest
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: red-team-retest
+          path: retest-red-team.txt
           if-no-files-found: warn
 
   security-gate:

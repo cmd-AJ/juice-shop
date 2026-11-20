@@ -1,4 +1,4 @@
-﻿describe('/#/deluxe-membership', () => {
+describe('/#/deluxe-membership', () => {
   describe('challenge "freeDeluxeChallenge"', () => {
     it('should upgrade to deluxe for free by making a post request to /rest/deluxe-membership by setting the paymentMode parameter to null', () => {
       cy.login({
