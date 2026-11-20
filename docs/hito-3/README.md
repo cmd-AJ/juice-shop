@@ -1,37 +1,41 @@
 # Hito 3 — Detección y respuesta (Blue Team)
 
-**Proyecto Final Integrador: OWASP Juice Shop y Secure SDLC**  
-**Rama de trabajo:** `h3-blue-team`
+**Proyecto Final Integrador: OWASP Juice Shop y Secure SDLC**
+
+**Ramas:** `h3-blue-team` (desarrollo original) y `h3-blue-team-fix` (integración de cambios sobre `master`).
+**Entorno:** laboratorio local con Docker, ModSecurity, OWASP CRS y Elastic Stack.
 
 ## 1. Objetivo y alcance
 
-Implementar un WAF con **ModSecurity y OWASP Core Rule Set (CRS)** delante de Juice Shop, centralizar los registros con **Filebeat → Elasticsearch → Kibana**, comprobar detección y bloqueo, analizar posibles falsos positivos y documentar la repetición de las pruebas del Red Team.
+Implementar un **WAF con ModSecurity y OWASP Core Rule Set (CRS)** frente a Juice Shop; enviar los registros mediante **Filebeat → Elasticsearch → Kibana**; desarrollar y verificar **tres reglas propias de detección**; comparar los modos `DetectionOnly` y `On`; analizar y ajustar detecciones no deseadas; y repetir las pruebas compartidas por el Red Team.
 
-> **Alcance y limitación de versión:** Las pruebas aquí descritas se efectuaron sobre la imagen `bkimminich/juice-shop:v20.3.0`, desplegada en Docker. El repositorio del equipo declara `20.4.0-SNAPSHOT`. Los resultados no se deben atribuir automáticamente al código de la rama del equipo sin repetir la validación sobre esa versión. El WAF se expone solo por `127.0.0.1:8080`, y la imagen de Juice Shop no publica el puerto 3000 en el host.
+> **Alcance de versiones:** las pruebas controladas del Blue Team se realizaron sobre `bkimminich/juice-shop:v20.3.0` en Docker. Posteriormente, el Red Team **revalidó las cuatro PoC** sobre la versión integrada `20.4.0-SNAPSHOT` a través del WAF en tres escenarios (`DetectionOnly`, `On` sin `PUT`, `On` con `PUT`). Los códigos HTTP se comparan en las secciones 5.2 y 5.3; esa consistencia no equivale a demostrar que todas las mitigaciones de código funcionan. El WAF se expone en `127.0.0.1:8080`; el puerto 3000 de la instancia original no está publicado en el host.
+
+> **Alcance de las detecciones:** las reglas personalizadas `10020`, `10021` y `10022` detectan patrones concretos de pruebas controladas. No implican que las cuatro PoC del Red Team estén bloqueadas ni que las vulnerabilidades de lógica de negocio se hayan corregido.
 
 ## 2. Arquitectura y configuración
 
 ```text
-Cliente local (127.0.0.1:8080)
-          |
-          v
+Cliente local :8080
+       |
+       v
 Nginx + ModSecurity + OWASP CRS 4.30.0
-          |                     \
-          v                      -> logs (access + audit)
-Juice Shop v20.3.0                       |
-puerto 3000 interno                      v
-                                      Filebeat 9.3.3
-                                          |
-                                          v
-                                    Elasticsearch 9.3.3
-                                          |
-                                          v
-                                       Kibana 9.3.3
+       |                         \
+       v                          +--> access.log y modsec_audit.json
+Juice Shop v20.3.0                             |
+(puerto 3000 interno)                         v
+                                          Filebeat 9.3.3
+                                               |
+                                               v
+                                        Elasticsearch 9.3.3
+                                               |
+                                               v
+                                           Kibana 9.3.3
 ```
 
-Los archivos de despliegue se encuentran en `waf-siem/docker-compose.yml`, `waf-siem/filebeat.yml` y `waf-siem/waf/`. El archivo `waf-siem/.env` contiene **configuración local** y no debe publicarse. Se agregó `/waf-siem/.env` al `.gitignore` y se ejecutó `git rm --cached waf-siem/.env` para dejar de rastrearlo **sin borrar la copia local**; ese cambio queda pendiente de commit/push. Para compartir parámetros de ejemplo se conserva `waf-siem/.env.example`. No se deben subir secretos ni configuraciones específicas de una máquina.
+Los archivos de despliegue están en `waf-siem/docker-compose.yml`, `waf-siem/filebeat.yml` y `waf-siem/waf/`. El archivo `waf-siem/.env` es **configuración local** y debe mantenerse fuera de Git; para compartir parámetros se utiliza `.env.example`.
 
-Variables relevantes **del laboratorio**, no un archivo `.env` para publicar:
+Variables del entorno de laboratorio (solo como referencia, **no** sustituir por un `.env` público):
 
 ```dotenv
 APP_BACKEND=http://juice-shop-h3:3000
@@ -43,52 +47,99 @@ BLOCKING_PARANOIA=1
 ELASTIC_VERSION=9.3.3
 ```
 
-La activación de `PUT` permite evaluar la PoC de reseñas sin confundir un rechazo genérico del método con un control real de autorización. Debe revisarse en cualquier despliegue distinto del laboratorio.
+Permitir `PUT` en `ALLOWED_METHODS` evita que la PoC de reseñas sea rechazada únicamente por el método HTTP (`911100`); **no corrige** la autorización del backend.
 
-## 3. Flujo de evidencias: ingesta y dashboard
+### Archivos de reglas
 
-Se verificó el estado de los servicios con `docker compose -f waf-siem/docker-compose.yml ps` y la aplicación a través del WAF con `curl.exe -I http://localhost:8080` (HTTP 200). Los registros de Nginx se almacenaron en `/var/log/waf/access.log` y los eventos de auditoría de ModSecurity en `/var/log/waf/modsec_audit.json`.
+| Archivo | Propósito | Estado |
+|---|---|---|
+| `waf-siem/waf/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf` | Exclusiones dinámicas previas al CRS: `10001` (preexistente) y `10030` (ajuste de laboratorio) | Configurado |
+| `waf-siem/waf/REQUEST-901-BLUE-TEAM-RULES.conf` | **Reglas propias** `10020`, `10021` y `10022` | Implementadas y verificadas |
+| `waf-siem/waf/RESPONSE-999-EXCLUSION-RULES-AFTER-CRS.conf` | Exclusiones posteriores al CRS, solo si el caso lo requiere | Sin exclusiones nuevas |
 
-Filebeat ingestó los registros al data stream `filebeat-9.3.3`. Se creó el Data View `filebeat-*` en Kibana y se verificaron inicialmente **21 solicitudes de acceso**; después se observaron **tres eventos de auditoría** correspondientes a las pruebas controladas de XSS, SQLi y firma de escáner. El dashboard **`Hito 3 - WAF Security Monitoring`** contiene:
+El `docker-compose.yml` monta los tres archivos en `/etc/modsecurity.d/owasp-crs/rules/`, directorio incluido por la configuración de ModSecurity. Las detecciones no se duplican en archivos de exclusiones.
 
-- **Eventos por origen** (`waf-access` / `waf-audit`). En la captura de referencia: 24 accesos y 3 auditorías.
-- **Reglas OWASP CRS activadas** (recuento por identificador de regla, no número de ataques independientes).
-- **Detecciones a lo largo del tiempo** (recuento temporal de eventos `waf-audit`).
+## 3. Ingesta, dashboard y demostración en Kibana
 
-**Exportación e importación del dashboard.** Se exportaron los *Saved Objects* a [`kibana-dashboard.ndjson`](kibana-dashboard.ndjson) desde Kibana, con la opción de incluir objetos relacionados. El archivo contiene **2 objetos** —el dashboard y el Data View `filebeat-*`—, **0 referencias faltantes** y sus tres paneles incrustados. Para reutilizarlo en otra instalación de Kibana compatible:
+Se comprobaron los servicios mediante `docker compose -f waf-siem/docker-compose.yml ps`, y las solicitudes a Juice Shop se enviaron a través de `http://localhost:8080`. Nginx escribe los accesos en `/var/log/waf/access.log` y ModSecurity registra las auditorías en `/var/log/waf/modsec_audit.json`.
 
-1. Levantar Elasticsearch, Kibana y Filebeat y comprobar que exista el flujo de logs del WAF.
-2. Abrir **Stack Management → Saved Objects → Import** y seleccionar `docs/hito-3/kibana-dashboard.ndjson`.
-3. Comprobar que aparezcan el Data View `filebeat-*` y el dashboard **Hito 3 - WAF Security Monitoring**; seleccionar un intervalo de tiempo con registros.
+Filebeat envía los documentos a Elasticsearch (`filebeat-9.3.3`), y en Kibana se utiliza el Data View `filebeat-*`. El dashboard **`Hito 3 - WAF Security Monitoring`** muestra tres paneles:
 
-La exportación **no incluye los logs ni los contenedores**: cada integrante debe iniciar su propia infraestructura y generar eventos. Los paneles esperan los campos `fields.fuente` y `modsec.transaction.messages.details.ruleId` según la ingesta configurada.
+| Panel actual | Qué representa realmente |
+|---|---|
+| **Eventos por origen** | Cantidad de documentos por **fuente de log** (`waf-access` y `waf-audit`), no por IP de cliente. El título debe mejorarse en la siguiente edición. |
+| **Reglas OWASP CRS activadas** | Recuento de coincidencias por `modsec.transaction.messages.details.ruleId`. Incluye tanto reglas del CRS como nuestras reglas `10020`, `10021` y `10022`; conviene renombrarlo **«Reglas activadas del WAF (CRS y personalizadas)»**. |
+| **Detecciones a lo largo del tiempo** | Evolución temporal de los documentos de auditoría de acuerdo con el filtro y período seleccionados. |
 
-**Nota de tiempo:** en esta configuración `@timestamp` refleja la marca temporal atribuida por Filebeat al documento; la hora exacta de la solicitud también está en el mensaje Nginx o en el JSON de auditoría. Guardar ambos valores cuando se correlacionen PoC y eventos.
+**Resultado reciente:** las tres reglas personalizadas `10020`, `10021` y `10022` se observaron en la gráfica de identificadores después de generar tráfico de prueba y pulsar **Refresh** con el rango **Last 24 hours**. La evidencia visual se presenta en la **captura 21**.
 
-## 4. Tres familias de detección comprobadas
+**Exportación:** existe un archivo de objetos guardados, [`kibana-dashboard.ndjson`](kibana-dashboard.ndjson), con el dashboard y el Data View relacionado. Se puede importar mediante **Stack Management → Saved Objects → Import** en una instalación compatible. La exportación no contiene los logs ni los contenedores. **Si se cambian títulos o paneles en Kibana, es necesario volver a exportar el NDJSON antes de entregar**; no se da por realizado ese cambio en este documento.
 
-| Prueba controlada | Payload / indicador | Reglas observadas | `DetectionOnly` | `On` |
+> **Tiempo de los eventos:** `@timestamp` es la marca temporal registrada en la ingesta de Filebeat en este entorno. Para correlacionar una PoC con una detección se deben revisar también la hora de Nginx o el JSON original de auditoría.
+
+## 4. Detecciones implementadas y verificadas
+
+### 4.1. Reglas personalizadas del Blue Team
+
+Las reglas están definidas en **[`REQUEST-901-BLUE-TEAM-RULES.conf`](../../waf-siem/waf/REQUEST-901-BLUE-TEAM-RULES.conf)** y se cargan en ModSecurity desde el volumen montado por Docker Compose.
+
+| ID | Patrón detectado | Campo inspeccionado | Acción | Validación |
 |---|---|---|---|---|
-| XSS en `GET /rest/products/search?q=...` | `<script>alert(1)</script>` | `941100`, `941110`, `941160`, `941390`, `949110` | HTTP 200; anomaly score 20 | HTTP 403 |
-| SQL Injection en búsqueda | `' OR '1'='1` | `942100`, `949110` | HTTP 200; anomaly score 5 | HTTP 403 |
-| Identificación de herramienta de escaneo | `User-Agent: Nikto/2.5.0` | `913100`, `949110` | HTTP 200; anomaly score 5 | No se documentó prueba de bloqueo en `On` |
+| **10020** | Texto con `<script` (firma XSS) | `ARGS:q` | `pass,log,auditlog` | Mensaje `H3 Blue Team - XSS detection` en auditoría y regla visible en Kibana |
+| **10021** | Cadena `or '1'='1` (firma SQLi de laboratorio) | `ARGS:q` | `pass,log,auditlog` | Mensaje `H3 Blue Team - SQLi detection` en auditoría y regla visible en Kibana |
+| **10022** | Cadena `nikto` (herramienta de escaneo) | `User-Agent` | `pass,log,auditlog` | Mensaje `H3 Blue Team - Scanner detection` en auditoría y regla visible en Kibana |
 
-**Detección de ráfagas por IP mediante ES|QL:** además de la firma Nikto (`913100`), se guardó la consulta reproducible [`deteccion-rafagas.esql`](deteccion-rafagas.esql), que agrupa eventos `waf-access` por IP y minuto con un umbral de **10 o más solicitudes/minuto**. En una prueba controlada de 20 solicitudes GET legítimas (todas HTTP 200), Elasticsearch devolvió **20 eventos para `172.19.0.1` en `2026-11-17T19:20:00Z`**, documentados en la evidencia 18. Esta es una **consulta de detección ejecutada manualmente**, no una alerta automática ni una regla de bloqueo del WAF. Es un umbral de laboratorio que también podría activarse con tráfico legítimo. La IP `172.19.0.1` corresponde al entorno Docker local, por lo que no identifica necesariamente al cliente externo real. Además, el agrupamiento usa `@timestamp` de Filebeat (ingesta), no la hora original de Nginx; esto limita la precisión temporal.
+Estas firmas tienen **alcance limitado**: `10020` y `10021` revisan el parámetro `q`; `10022` revisa el `User-Agent`. No constituyen detectores exhaustivos de XSS, SQLi o escaneo. **Las reglas propias registran la detección, pero no bloquean por sí solas** (`pass`). Los bloqueos HTTP 403 de las pruebas corresponden a las reglas y al puntaje de anomalía de OWASP CRS.
 
-Las pruebas controladas de XSS y SQLi verifican la detección de patrones y su bloqueo, **no** la explotación de esas vulnerabilidades en la aplicación.
+### 4.2. Pruebas controladas con OWASP CRS
 
-## 5. Validación de las PoC compartidas por Red Team
-
-El WAF estaba en modo `On` al ejecutar estas pruebas. La PoC-04 fue actualizada por el Red Team: actualmente corresponde a **XXE**, no al antiguo hallazgo de bypass por puerto 3000.
-
-| PoC | Petición | Respuesta observada | ¿El WAF bloqueó? | Interpretación y acción pendiente |
+| Prueba | Indicador | Reglas CRS observadas | `DetectionOnly` (prueba anterior) | `On` (prueba actual) |
 |---|---|---|---|---|
-| **01 — Open Redirect** | `GET /redirect?to=http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop` | **302 Found**; `Location` al dominio externo de prueba | **No** | La redirección se emitió; validar destinos permitidos en código (H4). No se siguió el enlace externo. |
-| **02 — Falta de anti-CSRF** | Con cuenta de laboratorio, `POST /dataerasure` con cookie `token`, sin token anti-CSRF independiente | **200 OK**; `Set-Cookie` borra la cookie | **No** | La solicitud se procesó, pero no se demostró el ataque entre orígenes desde navegador ni se verificó eliminación efectiva. Requiere validación adicional del Red Team y protección en código. |
-| **03 — Reseñas sin autenticación** | `PUT /rest/products/24/reviews` con JSON `message`, `author`; sin token explícito | **201 Created**; `{"status":"success"}` | **No** | Petición aceptada sin credenciales explícitas. Revisar control de identidad/autorización en el backend (H4). |
-| **04 — XXE en carga XML** | `POST /file-upload` con archivo `poc-h3.xml`, entidad externa apuntando a `/tmp/xxe-h3.txt` | **410 Gone**; carga XML descontinuada | **No: 410 de aplicación** | No apareció la cadena inocua `XXE_H3_CANARY`; **XXE no confirmada** en v20.3.0. Repetir con versión/código Red Team antes de concluir. |
+| XSS en `/rest/products/search?q=...` | `<script>alert(1)</script>` | `941100`, `941110`, `941160`, `941390`, `949110` | HTTP 200; anomaly score 20 | **HTTP 403** |
+| SQLi en búsqueda | `' OR '1'='1` | `942100`, `949110` | HTTP 200; anomaly score 5 | **HTTP 403** |
+| Identificación de escáner | `User-Agent: Nikto/2.5.0` | `913100`, `949110` | HTTP 200; anomaly score 5 | **HTTP 403**, confirmado después |
 
-Las solicitudes se registraron en `access.log`. Se debe distinguir entre **una solicitud registrada** y **una alerta de auditoría de ModSecurity**: una petición permitida no equivale a una regla de detección activada. Las cuatro PoC necesitan correlación explícita (hora, ruta, payload, estado, identificador de auditoría si existe) en la demostración definitiva. Las pruebas son locales; no se atacaron sistemas de terceros.
+Ejemplos reproducibles desde PowerShell (solo contra el laboratorio local):
+
+```powershell
+# XSS
+curl.exe -sS -o NUL -w "XSS HTTP %{http_code}\n" "http://localhost:8080/rest/products/search?q=%3Cscript%3Ealert(1)%3C%2Fscript%3E"
+
+# SQLi
+curl.exe -sS -o NUL -w "SQLi HTTP %{http_code}\n" "http://localhost:8080/rest/products/search?q=%27%20OR%20%271%27%3D%271"
+
+# User-Agent de Nikto
+curl.exe -sS -o NUL -w "Nikto HTTP %{http_code}\n" -A "Nikto/2.5.0" "http://localhost:8080/"
+```
+
+Para mostrar directamente que nuestras reglas están instaladas en el contenedor:
+
+```powershell
+docker compose -f waf-siem/docker-compose.yml exec -T waf sh -c 'grep -n "id:1002" /etc/modsecurity.d/owasp-crs/rules/REQUEST-901-BLUE-TEAM-RULES.conf'
+```
+
+Se comprobó el funcionamiento posterior a la reorganización de archivos: el WAF quedó **healthy**, la prueba Nikto devolvió **403**, y el evento con ID **10022** se registró correctamente en `modsec_audit.json`.
+
+### 4.3. Detección de ráfagas por IP (ES|QL)
+
+Además de las tres reglas ModSecurity, se creó la consulta [`deteccion-rafagas.esql`](deteccion-rafagas.esql), que agrupa accesos por IP y minuto y selecciona grupos con **10 o más solicitudes/minuto**. En una prueba de laboratorio con 20 solicitudes GET legítimas (HTTP 200), la consulta devolvió **20 eventos de `172.19.0.1`** en el minuto `2026-11-17T19:20:00Z` (captura 18).
+
+La consulta se ejecuta **manualmente**: **no es una alerta automática** ni bloquea tráfico. La IP `172.19.0.1` corresponde al entorno Docker local y no necesariamente al cliente real. El agrupamiento emplea `@timestamp` de ingesta, lo que limita su precisión temporal.
+
+## 5. Validación de las PoC compartidas por el Red Team
+
+### 5.1 Pruebas iniciales del Blue Team (Juice Shop v20.3.0)
+
+Las siguientes pruebas se realizaron con el WAF en modo `On` sobre **Juice Shop v20.3.0**. La PoC-04 comunicada por el Red Team corresponde a **XXE**, no al antiguo caso de bypass del puerto 3000.
+
+| PoC | Solicitud | Respuesta observada | ¿Bloqueó el WAF? | Conclusión |
+|---|---|---|---|---|
+| **01 — Open Redirect** | `GET /redirect?to=http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop` | **302 Found** y cabecera `Location` hacia el destino externo de prueba | **No** | La redirección fue emitida; validar destinos en código (H4). No se siguió el enlace externo. |
+| **02 — Falta de anti-CSRF** | `POST /dataerasure`, cookie `token` de cuenta de laboratorio y sin token anti-CSRF independiente | **200 OK**; se observó limpieza de cookie | **No** | Se procesó la solicitud, pero no se demostró un ataque entre orígenes desde navegador ni la eliminación efectiva. Requiere validación adicional. |
+| **03 — Reseñas sin autenticación** | `PUT /rest/products/24/reviews`, JSON con `message` y `author`, sin token explícito | **201 Created**; `{"status":"success"}` | **No** | La solicitud fue aceptada sin credenciales explícitas; revisar autorización en código (H4). |
+| **04 — XXE en carga XML** | `POST /file-upload` con entidad externa hacia `/tmp/xxe-h3.txt` | **410 Gone** | **No; respuesta del backend** | La cadena inocua `XXE_H3_CANARY` no apareció. **XXE no confirmada** en v20.3.0. |
+
+Las solicitudes se observaron en `access.log`, pero **registrar una petición no equivale a detectarla mediante una regla de auditoría**. En esta primera serie del Blue Team faltó una correlación completa entre hora, payload, resultado y evento SIEM; la revalidación posterior del Red Team y su evidencia se describen en las secciones 5.2 y 5.3. Ninguna de las pruebas descritas demuestra una corrección de las vulnerabilidades de lógica de negocio.
 
 ### 5.2 Revalidación del Red Team sobre la versión integrada (`20.4.0-SNAPSHOT`)
 
@@ -226,59 +277,116 @@ fields.fuente: "waf-audit"
 
 Esto devuelve los dos eventos auditados (`/rest/products/1/reviews` con `911100`+`949110`, y `/file-upload`), que son la evidencia de "detección sin bloqueo".
 
-## 6. Análisis de falsos positivos y ajustes
+## 6. Análisis de falsos positivos y exclusiones
 
-Se revisó `waf-siem/waf/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf`. Este archivo **ya contenía** la regla local `10001`, limitada al encabezado `Host` con IP `127.0.0.1`, que excluye **solo ese objetivo** de la evaluación de la regla CRS `920350` (encabezado `Host` con dirección IP numérica). No se desactivó el conjunto de reglas de OWASP CRS.
+### 6.1. Exclusión `10001` preexistente
 
-**Prueba de alcance con `MODSEC_RULE_ENGINE=On`:**
+El archivo `REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf` **ya contenía** una exclusión con ID `10001`, creada antes del trabajo del equipo, para el encabezado `Host: 127.0.0.1` respecto de la regla CRS `920350` (IP numérica en `Host`). **No se presenta como regla desarrollada por el Blue Team**.
 
-| Solicitud legítima | Respuesta | Auditoría de ModSecurity |
+| Solicitud | HTTP | Auditoría observada |
 |---|---|---|
-| `GET /` con `Host: 127.0.0.1:8080` | HTTP 200 | No se observó coincidencia `920350` para esta prueba |
-| `GET /` con `Host: 127.0.0.2:8080` | HTTP 200 | Sí se registró `920350`: `Host header is a numeric IP address` |
+| `GET /`, `Host: 127.0.0.1:8080` | 200 | Sin coincidencia `920350` en la prueba |
+| `GET /`, `Host: 127.0.0.2:8080` | 200 | Se registró `920350` (captura 19) |
 
-Para la segunda prueba, el registro mostró `Host: 127.0.0.2:8080`, respuesta `200` y la regla `920350`, el **17/11/2026 a las 19:44:19** (marca temporal del evento). La [evidencia 19](evidencias/19-regla-920350-host-alternativo.png) presenta la coincidencia y el estado HTTP. También se verificó una búsqueda legítima `GET /rest/products/search?q=apple` → HTTP 200.
+Esta prueba demuestra el **alcance limitado** de la exclusión previa, no la corrección de un bloqueo legítimo confirmado. También se verificó una búsqueda normal `q=apple` con HTTP 200.
 
-**Interpretación y limitaciones:** la comparación muestra que la detección `920350` sigue activa para un encabezado *Host* alternativo fuera de la exclusión. **No se observó bloqueo de tráfico legítimo**, por lo que no se afirma haber corregido un falso positivo que devolviera HTTP 403. La excepción `10001` **ya existía** antes de esta sesión; no se realizó una prueba antes/después de habilitarla ni se demostró que fuera indispensable. El HTTP 200 por sí solo tampoco demuestra la necesidad de la exclusión. El objetivo de esta prueba fue comprobar su alcance limitado y documentar el riesgo de detecciones sobre tráfico legítimo.
+### 6.2. Exclusión `10030` desarrollada por el Blue Team — prueba controlada
 
-En `ALLOWED_METHODS` se incorporó `PUT` para que la PoC-03 no fuera rechazada por método HTTP (`911100`). Esto es un **ajuste de política para el laboratorio**, no una corrección de la vulnerabilidad de reseñas sin autenticación.
+Se utilizó la búsqueda de laboratorio `GET /rest/products/search?q=union%20select%20juice` para demostrar el análisis y ajuste de una coincidencia del CRS sobre un campo de texto libre. Antes del ajuste, la solicitud devolvía **HTTP 403** a través del WAF y **HTTP 200** al consultar directamente Juice Shop.
 
-## 7. Evidencias (capturas)
+La auditoría indicó:
 
-| N.º | Archivo | Contenido |
-|---|---|---|
-| 01 | [Infraestructura](evidencias/01-infraestructura.png) | Contenedores y Juice Shop en Docker |
-| 02 | [Ingesta Elasticsearch](evidencias/02-ingesta-elasticsearch.png) | Índice/data stream de Filebeat con documentos |
-| 03 | [Discover / accesos](evidencias/03-kibana-discover.png) | Logs de Nginx accesibles en Kibana |
-| 04 | [XSS en ModSecurity](evidencias/04-deteccion-xss-modsecurity.png) | Payload y reglas de XSS |
-| 05 | [XSS en Kibana](evidencias/05-deteccion-xss-kibana.png) | Reglas XSS recibidas por SIEM |
-| 06 | [SQLi en ModSecurity](evidencias/06-deteccion-sqli-modsecurity.png) | Regla 942100, score 5 |
-| 07 | [SQLi en Kibana](evidencias/07-deteccion-sqli-kibana.png) | Alerta SQLi ingerida |
-| 08 | [Escáner en ModSecurity](evidencias/08-deteccion-escaner-modsecurity.png) | User-Agent Nikto, regla 913100 |
-| 09 | [Escáner en Kibana](evidencias/09-deteccion-escaner-kibana.png) | Firma de escáner visible en Discover |
-| 10 | [Dashboard WAF + SIEM](evidencias/10-dashboard-waf-siem.png) | Tres paneles y rango temporal |
-| 11 | [Bloqueo XSS](evidencias/11-bloqueo-xss.png) | HTTP 403, modo Enabled, score 20 |
-| 12 | [Bloqueo SQLi](evidencias/12-bloqueo-sqli.png) | HTTP 403, modo Enabled, score 5 |
-| 13 | [Puerto 3000 no publicado](evidencias/13-puerto-3000-no-publicado.png) | Conexión desde Windows al loopback 3000 falla; no demuestra aislamiento frente a otras redes Docker |
-| 14 | [PoC-01 Open Redirect](evidencias/14-poc01-open-redirect.png) | HTTP 302 y Location externa |
-| 15 | [PoC-03 reseñas](evidencias/15-poc03-resena-sin-autenticacion.png) | HTTP 201 sin token explícito |
-| 16 | [PoC-02 CSRF](evidencias/16-poc02-csrf-dataerasure.png) | HTTP 200 y limpieza de cookie |
-| 17 | [PoC-04 XXE no confirmada](evidencias/17-poc04-xxe-no-confirmada.png) | HTTP 410 del backend |
-| 18 | [Ráfaga de solicitudes por IP](evidencias/18-deteccion-rafaga-ip.png) | 20 solicitudes de `172.19.0.1` agrupadas en un minuto por consulta ES|QL |
-| 19 | [Regla 920350 y Host alternativo](evidencias/19-regla-920350-host-alternativo.png) | `Host: 127.0.0.2:8080` activó `920350` y recibió HTTP 200; detección sin bloqueo |
+- **`942190`:** coincidencia de `union select` dentro de `ARGS:q` (`Detects SQL code execution and information gathering attempts`).
+- **`949110`:** bloqueo por superar el umbral de anomalía (**score 5**). **No se excluye `949110`**.
 
-## 8. Cierre del Blue Team y pendientes de integración
+Se añadió la regla **`10030`** en [`REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf`](../../waf-siem/waf/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf). La condición encadenada comprueba **la ruta exacta** `/rest/products/search` y **el valor GET exacto** `union select juice`; si coinciden, retira `ARGS:q` del objetivo de inspección de la regla `942190` para esa solicitud. Las demás reglas del CRS siguen habilitadas.
 
-**Evidencias ya preparadas:** infraestructura WAF/SIEM, dashboard exportado con su Data View, detecciones de SQLi y XSS, consulta de ráfagas por IP, respuestas HTTP 403 a pruebas controladas, resultados de las cuatro PoC ejecutadas y revisión del alcance de la exclusión `10001`. Los datos históricos no se incluyen en el export de Kibana. No se configuraron alertas automáticas: la tercera detección se realiza mediante consulta ES|QL manual.
+**Resultados posteriores al ajuste:**
 
-**Pendientes para la entrega e integración:**
+| Prueba | Antes | Después |
+|---|---:|---:|
+| `q=union select juice` | **403** | **200** |
+| `q=union select juice extra` | 403 | **403** |
+| `q=' OR '1'='1` | 403 | **403** |
 
-1. **GitHub:** comprobar los archivos referenciados, confirmar que `.env` no se vuelve a rastrear, excluir los ZIP locales y realizar commit/push de esta rama.
-2. **PoC y versión del equipo:** repetir las pruebas sobre el código real del repositorio `20.4.0-SNAPSHOT` o dejar acordado el alcance del laboratorio `v20.3.0`; no extrapolar resultados entre versiones. La PoC-04 (XXE) no se confirmó y las PoC 01–03 no fueron bloqueadas por el WAF en las pruebas documentadas.
-3. **Demostración final con Red Team / H4:** correlacionar en vivo petición, hora, payload, respuesta HTTP y registro del WAF/SIEM. Distinguir una detección de ModSecurity de una solicitud solo registrada en `access.log` y comprobar las correcciones H4 por separado.
-4. **Falsos positivos:** la revisión documenta una excepción preexistente y una detección sin bloqueo, **no** una corrección de falso bloqueo demostrada mediante comparación antes/después. Si el docente exige esa evidencia específicamente, realizar una prueba adicional controlada.
-5. **Informe final H1–H4:** integrar la matriz de trazabilidad, riesgos residuales, correcciones de código y repetición posterior de las PoC.
+**Riesgo aceptado:** en el caso muy específico que coincide con la condición, el parámetro `q` deja de ser inspeccionado por `942190`, aunque otra regla del CRS podría seguir detectando contenido malicioso. La exclusión no debe generalizarse a otros valores, campos o rutas sin análisis.
+
+> **Limitación esencial:** `union select juice` contiene sintaxis característica de SQLi y fue seleccionada deliberadamente como **escenario controlado de ajuste**, no como incidente de falso positivo observado en usuarios reales. Que el backend responda HTTP 200 no convierte automáticamente la búsqueda en legítima. La práctica demuestra la técnica de exclusión y su alcance; si se exige un falso positivo real confirmado, todavía hace falta documentar un caso legítimo afectado.
+
+El ajuste `ALLOWED_METHODS=... PUT` fue necesario para evaluar la PoC-03 sin confundir un bloqueo por método (`911100`) con la falta de control de autorización. Es un ajuste de política para el laboratorio, no una corrección de código.
+
+## 7. Evidencias visuales integradas
+
+Las imágenes están **incrustadas** mediante rutas relativas a `docs/hito-3/evidencias/`, para que GitHub las muestre directamente al abrir este README. Se deben conservar los archivos PNG con sus nombres exactos en esa carpeta. La numeración sigue el orden en que se generaron las evidencias.
+
+### 7.1. Infraestructura e ingesta
+
+| **01 — Infraestructura Docker** | **02 — Ingesta en Elasticsearch** |
+|:---:|:---:|
+| <img src="evidencias/01-infraestructura.png" alt="Infraestructura Docker" width="460"> | <img src="evidencias/02-ingesta-elasticsearch.png" alt="Ingesta Elasticsearch" width="460"> |
+
+| **03 — Accesos en Discover** | **10 — Dashboard original WAF/SIEM** |
+|:---:|:---:|
+| <img src="evidencias/03-kibana-discover.png" alt="Discover y accesos del WAF" width="460"> | <img src="evidencias/10-dashboard-waf-siem.png" alt="Dashboard WAF y SIEM" width="460"> |
+
+### 7.2. Detecciones con OWASP CRS
+
+| **04 — XSS en ModSecurity** | **05 — XSS en Kibana** |
+|:---:|:---:|
+| <img src="evidencias/04-deteccion-xss-modsecurity.png" alt="Detección XSS en ModSecurity" width="460"> | <img src="evidencias/05-deteccion-xss-kibana.png" alt="Detección XSS en Kibana" width="460"> |
+
+| **06 — SQLi en ModSecurity** | **07 — SQLi en Kibana** |
+|:---:|:---:|
+| <img src="evidencias/06-deteccion-sqli-modsecurity.png" alt="Detección SQLi en ModSecurity" width="460"> | <img src="evidencias/07-deteccion-sqli-kibana.png" alt="Detección SQLi en Kibana" width="460"> |
+
+| **08 — Firma Nikto en ModSecurity** | **09 — Firma Nikto en Kibana** |
+|:---:|:---:|
+| <img src="evidencias/08-deteccion-escaner-modsecurity.png" alt="Firma de escáner en ModSecurity" width="460"> | <img src="evidencias/09-deteccion-escaner-kibana.png" alt="Firma de escáner en Kibana" width="460"> |
+
+| **11 — Bloqueo XSS** | **12 — Bloqueo SQLi** |
+|:---:|:---:|
+| <img src="evidencias/11-bloqueo-xss.png" alt="Bloqueo XSS HTTP 403" width="460"> | <img src="evidencias/12-bloqueo-sqli.png" alt="Bloqueo SQLi HTTP 403" width="460"> |
+
+### 7.3. Validación de PoC del Red Team y alcance de red
+
+| **13 — Puerto 3000 no publicado** | **14 — PoC-01 Open Redirect** |
+|:---:|:---:|
+| <img src="evidencias/13-puerto-3000-no-publicado.png" alt="Puerto 3000 no publicado en host" width="460"> | <img src="evidencias/14-poc01-open-redirect.png" alt="Open Redirect HTTP 302" width="460"> |
+
+| **15 — PoC-03 Reseñas** | **16 — PoC-02 CSRF** |
+|:---:|:---:|
+| <img src="evidencias/15-poc03-resena-sin-autenticacion.png" alt="Solicitud de reseña sin credenciales explícitas" width="460"> | <img src="evidencias/16-poc02-csrf-dataerasure.png" alt="Prueba de dataerasure" width="460"> |
+
+| **17 — PoC-04 XXE no confirmada** | **18 — Consulta de ráfagas ES/QL** |
+|:---:|:---:|
+| <img src="evidencias/17-poc04-xxe-no-confirmada.png" alt="Respuesta HTTP 410 a prueba XXE" width="460"> | <img src="evidencias/18-deteccion-rafaga-ip.png" alt="Consulta ES QL para ráfagas por IP" width="460"> |
+
+### 7.4. Exclusiones y nuestras reglas personalizadas
+
+| **19 — Regla 920350 con Host alternativo** | **20 — Reglas 10020, 10021 y 10022 en ModSecurity** |
+|:---:|:---:|
+| <img src="evidencias/19-regla-920350-host-alternativo.png" alt="Alcance de la exclusión preexistente 10001" width="460"> | <img src="evidencias/20-validacion-reglas-personalizadas.png" alt="Validación de tres reglas personalizadas" width="460"> |
+
+| **21 — Tres reglas propias visibles en Kibana** | **22 — Detección Nikto con regla 10022** |
+|:---:|:---:|
+| <img src="evidencias/21-reglas-personalizadas-kibana.png" alt="Gráfico de Kibana con IDs 10020 10021 y 10022" width="460"> | <img src="evidencias/22-regla-personalizada-nikto.png" alt="Evento de la regla personalizada 10022" width="460"> |
+
+**23 — Resultado del ajuste controlado de la exclusión `10030` (HTTP 200 / 403 / 403)**
+
+<img src="evidencias/23-validacion-exclusion-10030.png" alt="Validación del alcance de la exclusión 10030" width="920">
+
+## 8. Estado y pendientes de integración
+
+**Completado y verificado:** WAF con OWASP CRS, ingesta hacia Elastic, dashboard, comparación `DetectionOnly`/`On`, tres reglas propias registrando auditorías, consulta manual de ráfagas, exclusión `10030` con pruebas de alcance y revalidación de las cuatro PoC por el Red Team sobre `20.4.0-SNAPSHOT` (sin afirmar protección donde no la hubo).
+
+**Pendientes relevantes:**
+
+1. **Repositorio:** completar la integración del PR de `h3-blue-team-fix` hacia `master`, conservando las revalidaciones del Red Team y las reglas/evidencias nuevas del Blue Team; **no incluir `revision-proyecto.zip`** ni `.env`.
+2. **Dashboard:** corregir los títulos que hoy no representan exactamente sus métricas y **reexportar** `kibana-dashboard.ndjson` si se modifica.
+3. **Falsos positivos:** `10030` demuestra una exclusión limitada de laboratorio; si la evaluación exige un caso legítimo real bloqueado, debe documentarse aparte y no inventarse.
+4. **PoC del Red Team:** la revalidación sobre `20.4.0-SNAPSHOT` ya está documentada en la sección 5.2. Para la demostración conjunta, correlacionar con el SIEM las horas, rutas, resultados y registros disponibles. **XXE sigue sin confirmarse en ambas versiones**, y la ausencia de bloqueo para PoC 01–03 debe reconocerse como riesgo pendiente de remediación en código.
+5. **Integración H4:** las vulnerabilidades de lógica de negocio requieren cambios de código, auditoría y repetición de PoC; un 403 del CRS no sustituye una remediación.
 
 ## 9. Uso de IA
 
-Se utilizó ChatGPT para estructurar pruebas controladas, interpretar evidencias y preparar la documentación. Se utilizó Claude en el navegador para crear el Data View `filebeat-*` y el dashboard de Kibana. 
+Se utilizó **ChatGPT** para estructurar pruebas controladas, interpretar resultados y preparar la documentación. Se utilizó **Claude** en el navegador para configurar el Data View `filebeat-*` y el dashboard de Kibana. Las pruebas, configuraciones y conclusiones deben ser revisadas por los integrantes del equipo y citar el uso de IA conforme a las indicaciones de la UVG.
