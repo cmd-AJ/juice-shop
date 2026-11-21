@@ -10,29 +10,7 @@ Integrantes y roles:
 | Andre Jo | Equipo rojo |
 | Pedro Guzman | Equipo rojo |
 | Isabella Miralles    | Equipo azul |
-| Edwin Andres Ortega Kou | Equ## Cómo lo h#### DFD
-
-<!--
-*Instrucción: diagrama de flujo de datos de su aplicación, con los límites de
-confianza marcados. Guarden la imagen en esta carpeta, por ejemplo como
-`dfd.png`, y péguenla debajo.*
--->
-
-![DFD de Juice Shop con límites de confianza](/docs/hito-1/hito-1-assets/dfd_juice_shop.png)
-
-
-## STRIDE
-
-*Instrucción: una amenaza por letra. El componente es de su app, no un ejemplo
-genérico.*
-
-| Letra | Amenaza | Componente | Control |
-|---|---|---|---|
-| Suplantación | Pasar como administrador sin conocer su contraseña, utilizando inyecciones SQL hacia el login o tomando el token JWT para hacer consultas. | Proceso 3 - Autenticación | Realizar consultas parametrizadas con Sequelize. Validar el formato del correo, verificar que la firma y el algoritmo del JWT sean correctos. Aplicar reglas en el WAF para SQL injection. |
-| Manipulación | Modificar la información, por ejemplo reseñas. En Juice Shop se observa que no se necesita autenticación para editar una reseña. | Proceso 6 - Reseñas | Implementar autorización en la ruta y comprobar que el token sea del usuario que escribió la reseña. |
-| Repudio | El usuario actúa y luego lo niega, porque los registros son incompletos o se pueden borrar o alterar. | Proceso 9 - Administración y logs | Logs de auditoría con usuario, IP y hora. |
-| Divulgación de información | Se descargan archivos confidenciales que se extraen por medio de `/ftp`. | Proceso 7 - Subida de archivos | Límite de tamaño y desactivar entidades XML externas. Configurar reglas de ráfagas en el WAF. |
-| Elevación de privilegios | Un usuario se puede registrar como administrador si cambia el rol a administrador. | Proceso 3 - Registro | Ignorar el campo `role` en el servidor y asignarlo siempre como "customer". |
+| Edwin Andres Ortega Kou | Equipo azul |
 
 ## PASTA
 
@@ -47,10 +25,9 @@ Sus principales objetivos son los siguientes
 | ID | Objetivo | Impacto si hay una vulnerabilidad |
 |---|---|---|
 | OB-1 | Vender en línea con alta disponibilidad | Un ataque de denegación de servicio detiene las ventas y causa pérdida directa de ingresos |
-| OB-2 | Proteger los datos de los clientes (credenciales, direcciones, tarjetas, pedidos) | Una inyección SQL o un acceso indebido filtra datos personales y de pago, con daño al cliente y responsabilidad legal |
+| OB-2 | Proteger los datos de los clientes (credenciales, direcciones, tarjetas, pedidos) y cumplir con la protección de datos personales | Una inyección SQL, un acceso indebido o un borrado mal controlado filtra o expone datos personales y de pago, con daño al cliente, sanciones y responsabilidad legal |
 | OB-3 | Evitar el fraude en pagos, cupones y cuentas | Un atacante obtiene productos gratis, abusa de cupones o toma cuentas ajenas |
-| OB-4 | Mantener la confianza y la reputación de la marca | Reseñas manipuladas o redirecciones a sitios maliciosos hacen perder la confianza de los clientes |
-| OB-5 | Cumplir con la protección de datos personales | Una filtración o un borrado de datos mal controlado expone a sanciones y a reclamos de los usuarios |
+| OB-4 | Mantener la confianza y la reputación de la marca | Las redirecciones a sitios maliciosos (phishing) o las cuentas tomadas hacen perder la confianza de los clientes |
 
 
 **Activos críticos**
@@ -88,7 +65,7 @@ Sus principales objetivos son los siguientes
 | RS-04 | Los JWT se validan siempre (firma, algoritmo y expiración) y no contienen datos sensibles. | OB-2 | Prueba con token alterado; revisión del payload |
 | RS-05 | Los archivos internos, logs y configuración no se publican ni se listan. | OB-2 | Acceso a `/ftp`, `/support/logs` y `/rest/admin/*` |
 | RS-06 | La subida de archivos tiene límites de tamaño y bloquea entidades XML externas. | OB-1 | Subida de archivo malicioso |
-| RS-07 | Las acciones sensibles se registran con usuario, IP y hora, y los logs salen a un SIEM. | OB-3, OB-5 | Consulta en Kibana |
+| RS-07 | Las acciones sensibles se registran con usuario, IP y hora, y los logs salen a un SIEM. | OB-2, OB-3 | Consulta en Kibana |
 | RS-08 | Los intentos de ataque (SQLi, XSS, ráfagas) se detectan y se bloquean en el WAF. | OB-1, OB-2 | Repetición de PoC con WAF en modo On |
 | RS-09 | Las redirecciones solo van a destinos de una lista exacta de permitidos. | OB-4 | Prueba de `/redirect?to=` con dominios externos |
 | RS-10 | Las operaciones que cambian estado exigen protección anti-CSRF. | OB-3 | Prueba de envío cruzado a `/dataerasure` |
@@ -285,7 +262,20 @@ Sus principales objetivos son los siguientes
 | **Divulgación de configuración e IP privada** (riesgo Bajo, CWE-497). La respuesta contiene `192.168.99.100:3000`. | `/rest/admin/application-configuration` | P9 · administración. Lee de D3 (F13). Amenaza T-08 |
 | **Datos sensibles dentro del JWT** (CWE-200; no lo marcó ZAP, sale de la cookie `token` en las peticiones del reporte). El payload incluye `password` (hash MD5), `role` y `totpSecret`. | Cookie `token` enviada en todas las peticiones autenticadas | P3 · autenticación. Token emitido con la clave de D3 (F12). Amenazas T-02 y T-08 |
 | **Archivos internos accesibles en `/ftp`** (CWE-538; ZAP los rastreó, aparecen en la alerta de CSP). | `/ftp/coupons_2013.md.bak`, `/ftp/encrypt.pyc`, `/ftp/package-lock.json.bak` | P7 · archivos. Lectura de D3 (F11, TB-2 → TB-3). Amenaza T-07 |
-`role` en el servidor y asignarlo siempre como "customer". |
+
+## DFD
+
+![DFD de Juice Shop con límites de confianza](/docs/hito-1/hito-1-assets/dfd_juice_shop.png)
+
+## STRIDE
+
+| Letra | Amenaza | Componente | Control |
+|---|---|---|---|
+| Suplantación | Pasar como administrador sin conocer su contraseña, utilizando inyecciones SQL hacia el login o tomando el token JWT para hacer consultas. | Proceso 3 - Autenticación | Realizar consultas parametrizadas con Sequelize. Validar el formato del correo, verificar que la firma y el algoritmo del JWT sean correctos. Aplicar reglas en el WAF para SQL injection. |
+| Manipulación | Modificar la información, por ejemplo reseñas. En Juice Shop se observa que no se necesita autenticación para editar una reseña. | Proceso 6 - Reseñas | Implementar autorización en la ruta y comprobar que el token sea del usuario que escribió la reseña. |
+| Repudio | El usuario actúa y luego lo niega, porque los registros son incompletos o se pueden borrar o alterar. | Proceso 9 - Administración y logs | Logs de auditoría con usuario, IP y hora. |
+| Divulgación de información | Se descargan archivos confidenciales que se extraen por medio de `/ftp`. | Proceso 7 - Subida de archivos | Límite de tamaño y desactivar entidades XML externas. Configurar reglas de ráfagas en el WAF. |
+| Elevación de privilegios | Un usuario se puede registrar como administrador si cambia el rol a administrador. | Proceso 3 - Registro | Ignorar el campo `role` en el servidor y asignarlo siempre como "customer". |
 
 ## Superficie de ataque
 
