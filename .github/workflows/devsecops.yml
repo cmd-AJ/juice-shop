@@ -286,3 +286,77 @@ jobs:
           name: security-gate-summary
           path: security-gate-summary.txt
           if-no-files-found: warn
+  # ---------------------------------------------------------------------------
+  # DEMO: validación del Security Gate.
+  # Ejecuta la MISMA política del gate contra un reporte de ZAP de ejemplo que
+  # contiene una alerta High. El objetivo es demostrar que el gate BLOQUEA: este
+  # job debe terminar en ROJO (exit 1). No evalúa la aplicación real.
+  # ---------------------------------------------------------------------------
+  security-gate-demo:
+    name: Security Gate - DEMO (debe fallar con High)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare sample ZAP report with a High finding
+        run: |
+          mkdir -p zap-results
+          cp docs/hito-2/gate-demo/zap-report-high-sample.json zap-results/zap-report.json
+          echo "Using sample report:"
+          cat zap-results/zap-report.json
+
+      - name: Evaluate security policy (must FAIL on High)
+        run: |
+          python <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          report_path = Path("zap-results/zap-report.json")
+
+          if not report_path.exists():
+              print("ERROR: ZAP JSON report was not found.")
+              sys.exit(1)
+
+          try:
+              with report_path.open(encoding="utf-8") as file:
+                  report = json.load(file)
+          except (json.JSONDecodeError, OSError) as error:
+              print(f"ERROR: Could not read ZAP report: {error}")
+              sys.exit(1)
+
+          if not isinstance(report.get("site"), list):
+              print("ERROR: ZAP report does not contain a valid site list.")
+              sys.exit(1)
+
+          counts = {"3": 0, "2": 0, "1": 0, "0": 0}
+
+          for site in report.get("site", []):
+              for alert in site.get("alerts", []):
+                  risk = str(alert.get("riskcode", ""))
+                  if risk not in counts:
+                      continue
+                  instances = alert.get("instances", [])
+                  counts[risk] += len(instances) if instances else 1
+
+          print("\n========== SECURITY GATE (DEMO) ==========")
+          print(f"High:          {counts['3']}")
+          print(f"Medium:        {counts['2']}")
+          print(f"Low:           {counts['1']}")
+          print(f"Informational: {counts['0']}")
+
+          if counts["3"] > 0:
+              result = "FAIL - High risk findings detected"
+              exit_code = 1
+          elif counts["2"] > 0:
+              result = "WARN - Medium risk findings detected"
+              exit_code = 0
+          else:
+              result = "PASS - No High or Medium risk findings"
+              exit_code = 0
+
+          print(f"\nResult: {result}")
+          sys.exit(exit_code)
+          PY

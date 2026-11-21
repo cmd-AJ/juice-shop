@@ -1,0 +1,11 @@
+{
+  "site": [
+    {
+      "@name": "http://127.0.0.1:3000",
+      "alerts": [
+        { "alert": "SQL Injection", "riskcode": "3", "instances": [ {"uri":"/rest/products/search?q="} ] },
+        { "alert": "CSP Header Not Set", "riskcode": "2", "instances": [ {"uri":"/"} ] }
+      ]
+    }
+  ]
+}
