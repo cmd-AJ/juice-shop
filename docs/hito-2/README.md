@@ -853,6 +853,8 @@ Los resultados del Red Team deberán compararse con los hallazgos de SAST y con 
      `http://localhost:8080/redirect?to=http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop`
   2. En *Settings* de la petición, desactivar **"Automatically follow redirects"** (para ver el `302` crudo).
   3. Send y revisar la cabecera `Location`.
+ 
+  ![Juice Shop](/docs/hito-2/hito-2-assets/POC1Postman.png)
 
   Equivalente por terminal:
   ```bash
