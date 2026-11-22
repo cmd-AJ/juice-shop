@@ -895,6 +895,12 @@ Los resultados del Red Team deberán compararse con los hallazgos de SAST y con 
   3. Pestaña **Headers** → `Content-Type: application/x-www-form-urlencoded` y la `Cookie: token=<jwt-de-la-victima>`. No incluir ningún header ni campo de token CSRF.
   4. Pestaña **Body** → `x-www-form-urlencoded`: `email=victima@juice-sh.op` y `securityAnswer=respuesta-conocida`.
   5. Send. La petición se procesa sin exigir token impredecible → vulnerable a CSRF.
+ 
+  ![Juice Shop](/docs/hito-2/hito-2-assets/POC2PostmanParte1.png)
+
+   ![Juice Shop](/docs/hito-2/hito-2-assets/POC2PostmanParte2.png)
+
+   ![Juice Shop](/docs/hito-2/hito-2-assets/POC2PostmanParte3.png)
 
   Equivalente por terminal (crear usuario, login y disparar la acción sin token CSRF):
   ```bash
