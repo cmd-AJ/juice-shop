@@ -76,3 +76,6 @@ cypress/screenshots/
 /waf-siem/.env
 
 /waf-siem/.env
+
+
+buildH3
